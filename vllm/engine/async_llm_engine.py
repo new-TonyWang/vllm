@@ -26,10 +26,15 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import ExecuteModelRequest
 from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.usage.usage_lib import UsageContext
+from .global_request_logger import GlobalRequestLogger
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
+global_request_logger = None
 
+def get_global_request_logger():
+    global global_request_logger
+    return global_request_logger
 
 class AsyncEngineDeadError(RuntimeError):
     pass
@@ -167,6 +172,9 @@ class RequestTracker:
 
         if verbose and finished:
             logger.info("Finished request %s.", request_id)
+        global global_request_logger
+        global_request_logger.request_finish(request_id,time.time())
+        global_request_logger.print_timeline(request_id)
 
     def process_exception(self,
                           request_id: str,
@@ -199,7 +207,10 @@ class RequestTracker:
 
         if verbose:
             logger.info("Added request %s.", request_id)
-
+        global global_request_logger
+        if not global_request_logger.is_begin():
+            global_request_logger.set_begin()
+        global_request_logger.request_begin(request_id,engine_add_request_kwargs["arrival_time"])
         return stream
 
     def abort_request(self,
@@ -255,6 +266,8 @@ class _AsyncLLMEngine(LLMEngine):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        global global_request_logger
+        global_request_logger = GlobalRequestLogger.instance()
 
     async def step_async(
         self, virtual_engine: int
@@ -335,11 +348,27 @@ class _AsyncLLMEngine(LLMEngine):
             if allow_async_output_proc:
                 execute_model_req.async_callback = self.async_callbacks[
                     virtual_engine]
+            global global_request_logger
+            current_time = time.time()
+            for metadata in execute_model_req.seq_group_metadata_list:
+                request_id = metadata.request_id
+                if metadata.is_prompt:
+                    global_request_logger.prompt_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list))
+                else:
+                    global_request_logger.decode_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list))
 
             # Execute the model.
             outputs = await self.model_executor.execute_model_async(
                 execute_model_req)
 
+            current_time = time.time()
+            for metadata in execute_model_req.seq_group_metadata_list:
+                request_id = metadata.request_id
+                if metadata.is_prompt:
+                    global_request_logger.prompt_end(request_id,current_time)
+                else:
+                    global_request_logger.decode_end(request_id,current_time)
+                    
             # we need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.
             if self.scheduler_config.is_multi_step:
