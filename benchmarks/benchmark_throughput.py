@@ -63,6 +63,38 @@ def sample_requests(
 
     return filtered_dataset
 
+def sample_requests_local(
+    dataset_path: str,
+    num_requests: int,
+    tokenizer: PreTrainedTokenizerBase,
+    fixed_output_len: Optional[int],
+) -> List[Tuple[str, int, int]]:
+    if fixed_output_len is not None and fixed_output_len < 4:
+        raise ValueError("output_len too small")
+
+    # Load the dataset.
+    with open(dataset_path) as f:
+        dataset = f.readlines()
+
+    # Shuffle the dataset.
+    random.shuffle(dataset)
+
+    # Filter out sequences that are too long or too short
+    filtered_dataset: List[Tuple[str, int, int]] = []
+    for i in range(len(dataset)):
+        if len(filtered_dataset) == num_requests:
+            break
+
+        # Tokenize the prompts and completions.
+        prompt = dataset[i]
+        prompt_token_ids = tokenizer(prompt).input_ids
+        # completion_token_ids = tokenizer(completion).input_ids
+        prompt_len = len(prompt_token_ids)
+        output_len = 4096
+        filtered_dataset.append((prompt, prompt_len, output_len))
+
+    return filtered_dataset
+
 
 def run_vllm(
     requests: List[Tuple[str, int, int]],
@@ -70,6 +102,7 @@ def run_vllm(
     tokenizer: str,
     quantization: Optional[str],
     tensor_parallel_size: int,
+    pipeline_parallel_size: int,
     seed: int,
     n: int,
     use_beam_search: bool,
@@ -90,6 +123,8 @@ def run_vllm(
     download_dir: Optional[str] = None,
     load_format: str = EngineArgs.load_format,
     disable_async_output_proc: bool = False,
+    max_num_seqs = 256,
+    enable_profile = False,
 ) -> float:
     from vllm import LLM, SamplingParams
     llm = LLM(
@@ -97,6 +132,7 @@ def run_vllm(
         tokenizer=tokenizer,
         quantization=quantization,
         tensor_parallel_size=tensor_parallel_size,
+        pipeline_parallel_size=pipeline_parallel_size,
         seed=seed,
         trust_remote_code=trust_remote_code,
         dtype=dtype,
@@ -115,6 +151,7 @@ def run_vllm(
         num_scheduler_steps=num_scheduler_steps,
         use_v2_block_manager=use_v2_block_manager,
         disable_async_output_proc=disable_async_output_proc,
+        max_num_seqs=max_num_seqs,
     )
 
     # Add the requests to the engine.
@@ -131,10 +168,13 @@ def run_vllm(
                 ignore_eos=True,
                 max_tokens=output_len,
             ))
-
+    if enable_profile:
+        llm.start_profile()
     start = time.perf_counter()
     llm.generate(prompts, sampling_params, use_tqdm=True)
     end = time.perf_counter()
+    if enable_profile:
+        llm.stop_profile()
     return end - start
 
 
@@ -144,6 +184,7 @@ async def run_vllm_async(
     tokenizer: str,
     quantization: Optional[str],
     tensor_parallel_size: int,
+    pipeline_parallel_size: int,
     seed: int,
     n: int,
     use_beam_search: bool,
@@ -165,6 +206,8 @@ async def run_vllm_async(
     load_format: str = EngineArgs.load_format,
     disable_async_output_proc: bool = False,
     disable_frontend_multiprocessing: bool = False,
+    max_num_seqs = 256,
+    enable_profile = False
 ) -> float:
     from vllm import SamplingParams
     engine_args = AsyncEngineArgs(
@@ -172,6 +215,7 @@ async def run_vllm_async(
         tokenizer=tokenizer,
         quantization=quantization,
         tensor_parallel_size=tensor_parallel_size,
+        pipeline_parallel_size=pipeline_parallel_size,
         seed=seed,
         trust_remote_code=trust_remote_code,
         dtype=dtype,
@@ -191,8 +235,8 @@ async def run_vllm_async(
         use_v2_block_manager=use_v2_block_manager,
         disable_async_output_proc=disable_async_output_proc,
         worker_use_ray=False,
-        engine_use_ray=False,
         disable_log_requests=True,
+        max_num_seqs=max_num_seqs
     )
 
     async with build_async_engine_client_from_engine_args(
@@ -214,6 +258,8 @@ async def run_vllm_async(
                 ))
 
         generators = []
+        if enable_profile:
+           await llm.start_profile()
         start = time.perf_counter()
         for i, (prompt, sp) in enumerate(zip(prompts, sampling_params)):
             generator = llm.generate(prompt, sp, request_id=f"test{i}")
@@ -222,6 +268,8 @@ async def run_vllm_async(
         async for i, res in all_gens:
             pass
         end = time.perf_counter()
+        if enable_profile:
+           await llm.stop_profile()
         return end - start
 
 
@@ -302,11 +350,10 @@ def run_mii(
     client.terminate_server()
     return end - start
 
-
+import sys
 def main(args: argparse.Namespace):
     print(args)
     random.seed(args.seed)
-
     # Sample the requests.
     tokenizer = AutoTokenizer.from_pretrained(
         args.tokenizer, trust_remote_code=args.trust_remote_code)
@@ -316,13 +363,13 @@ def main(args: argparse.Namespace):
         requests = [(prompt, args.input_len, args.output_len)
                     for _ in range(args.num_prompts)]
     else:
-        requests = sample_requests(args.dataset, args.num_prompts, tokenizer,
+        requests = sample_requests_local(args.dataset, args.num_prompts, tokenizer,
                                    args.output_len)
-
+        print(requests)
     if args.backend == "vllm":
         run_args = [
             requests, args.model, args.tokenizer, args.quantization,
-            args.tensor_parallel_size, args.seed, args.n, args.use_beam_search,
+            args.tensor_parallel_size, args.pipeline_parallel_size, args.seed, args.n, args.use_beam_search,
             args.trust_remote_code, args.dtype, args.max_model_len,
             args.enforce_eager, args.kv_cache_dtype,
             args.quantization_param_path, args.device,
@@ -332,11 +379,12 @@ def main(args: argparse.Namespace):
             args.use_v2_block_manager, args.download_dir, args.load_format,
             args.disable_async_output_proc
         ]
-
+        
         if args.async_engine:
-            run_args.append(args.disable_frontend_multiprocessing)
+            run_args.extend([args.disable_frontend_multiprocessing,args.max_num_seqs,args.profile])
             elapsed_time = uvloop.run(run_vllm_async(*run_args))
         else:
+            run_args.extend([args.max_num_seqs,args.profile])
             elapsed_time = run_vllm(*run_args)
     elif args.backend == "hf":
         assert args.tensor_parallel_size == 1
@@ -362,7 +410,7 @@ def main(args: argparse.Namespace):
             "requests_per_second": len(requests) / elapsed_time,
             "tokens_per_second": total_num_tokens / elapsed_time,
         }
-        with open(args.output_json, "w") as f:
+        with open(args.output_json.replace(".json",f"{len(requests)}_requests.json"), "w") as f:
             json.dump(results, f, indent=4)
 
 
@@ -392,6 +440,7 @@ if __name__ == "__main__":
                         choices=[*QUANTIZATION_METHODS, None],
                         default=None)
     parser.add_argument("--tensor-parallel-size", "-tp", type=int, default=1)
+    parser.add_argument("--pipeline-parallel-size", "-pp", type=int, default=1)
     parser.add_argument("--n",
                         type=int,
                         default=1,
@@ -402,6 +451,7 @@ if __name__ == "__main__":
                         default=1000,
                         help="Number of prompts to process.")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--profile", action='store_true',default=False)
     parser.add_argument("--hf-max-batch-size",
                         type=int,
                         default=None,
@@ -474,6 +524,11 @@ if __name__ == "__main__":
     parser.add_argument('--max-num-batched-tokens',
                         type=int,
                         default=None,
+                        help='maximum number of batched tokens per '
+                        'iteration')
+    parser.add_argument('--max-num-seqs',
+                        type=int,
+                        default=256,
                         help='maximum number of batched tokens per '
                         'iteration')
     parser.add_argument('--download-dir',

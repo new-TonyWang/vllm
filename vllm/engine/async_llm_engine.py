@@ -26,15 +26,10 @@ from vllm.sampling_params import SamplingParams
 from vllm.sequence import ExecuteModelRequest
 from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.usage.usage_lib import UsageContext
-from .global_request_logger import GlobalRequestLogger
+from .global_request_logger import init_global_request_logger,get_global_request_logger
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = envs.VLLM_ENGINE_ITERATION_TIMEOUT_S
-global_request_logger = None
-
-def get_global_request_logger():
-    global global_request_logger
-    return global_request_logger
 
 class AsyncEngineDeadError(RuntimeError):
     pass
@@ -172,7 +167,7 @@ class RequestTracker:
 
         if verbose and finished:
             logger.info("Finished request %s.", request_id)
-        global global_request_logger
+        global_request_logger = get_global_request_logger()
         global_request_logger.request_finish(request_id,time.time())
         global_request_logger.print_timeline(request_id)
 
@@ -207,9 +202,9 @@ class RequestTracker:
 
         if verbose:
             logger.info("Added request %s.", request_id)
-        global global_request_logger
+        global_request_logger = get_global_request_logger()
         if not global_request_logger.is_begin():
-            global_request_logger.set_begin()
+            global_request_logger.set_begin(engine_add_request_kwargs["arrival_time"])
         global_request_logger.request_begin(request_id,engine_add_request_kwargs["arrival_time"])
         return stream
 
@@ -266,8 +261,7 @@ class _AsyncLLMEngine(LLMEngine):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        global global_request_logger
-        global_request_logger = GlobalRequestLogger.instance()
+        init_global_request_logger()
 
     async def step_async(
         self, virtual_engine: int
@@ -292,17 +286,19 @@ class _AsyncLLMEngine(LLMEngine):
 
         # Clear outputs for each new scheduler iteration
         ctx.request_outputs.clear()
-
+        global_request_logger = get_global_request_logger()
         # skip the scheduler if there are any remaining steps in the seq groups.
         # This ensures that the scheduler is only called again when the current
         # batch has completed.
         if not self._has_remaining_steps(seq_group_metadata_list):
 
+            global_request_logger.schedule_begin(time.time())
             # Schedule iteration
             (seq_group_metadata_list, scheduler_outputs,
              allow_async_output_proc
              ) = self.scheduler[virtual_engine].schedule()
-
+            global_request_logger.schedule_end(time.time())
+            
             ctx.seq_group_metadata_list = seq_group_metadata_list
             ctx.scheduler_outputs = scheduler_outputs
 
@@ -348,14 +344,35 @@ class _AsyncLLMEngine(LLMEngine):
             if allow_async_output_proc:
                 execute_model_req.async_callback = self.async_callbacks[
                     virtual_engine]
-            global global_request_logger
+
             current_time = time.time()
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                all_prompt_length = 0
+                prompt_batches_number = 0
+                request_ids = []
+                for item in execute_model_req.seq_group_metadata_list:
+                    request_ids.append(item.request_id)
+                    for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        all_prompt_length += value.get_prompt_len()
+                        prompt_batches_number += 1
+                global_request_logger.prefill_step_begin(current_time,request_ids)
+            else:
+                decode_batch = 0
+                for item in execute_model_req.seq_group_metadata_list:
+                    for key in item.seq_data.keys():
+                        decode_batch+=1
+                global_request_logger.decode_step_begin(current_time)
+
             for metadata in execute_model_req.seq_group_metadata_list:
                 request_id = metadata.request_id
                 if metadata.is_prompt:
-                    global_request_logger.prompt_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list))
+                    for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        all_prompt_length = value.get_prompt_len()
+                    global_request_logger.prompt_begin(request_id,current_time,all_prompt_length,len(execute_model_req.seq_group_metadata_list),prompt_batches_number)
                 else:
-                    global_request_logger.decode_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list))
+                    global_request_logger.decode_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
 
             # Execute the model.
             outputs = await self.model_executor.execute_model_async(
@@ -368,7 +385,12 @@ class _AsyncLLMEngine(LLMEngine):
                     global_request_logger.prompt_end(request_id,current_time)
                 else:
                     global_request_logger.decode_end(request_id,current_time)
-                    
+            
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                global_request_logger.prefill_step_end(current_time,all_prompt_length,prompt_batches_number)
+            else:
+                global_request_logger.decode_step_end(current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+            logger.info("="*50)
             # we need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.
             if self.scheduler_config.is_multi_step:

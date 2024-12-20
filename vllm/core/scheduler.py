@@ -321,12 +321,12 @@ class Scheduler:
             version)
 
         num_gpu_blocks = cache_config.num_gpu_blocks
-        if num_gpu_blocks:
-            num_gpu_blocks //= pipeline_parallel_size
+        # if num_gpu_blocks:
+            # num_gpu_blocks //= pipeline_parallel_size
 
         num_cpu_blocks = cache_config.num_cpu_blocks
-        if num_cpu_blocks:
-            num_cpu_blocks //= pipeline_parallel_size
+        # if num_cpu_blocks:
+            # num_cpu_blocks //= pipeline_parallel_size
 
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerImpl(
@@ -859,6 +859,8 @@ class Scheduler:
             if (num_new_tokens == 0
                     or not budget.can_schedule(num_new_tokens=num_new_tokens,
                                                num_new_seqs=num_new_seqs)):
+                logger.info(f"bucket cannot schedule for num new seqence {num_new_tokens} or num_new_seqs {num_new_seqs}")
+                logger.info(f"{budget}")
                 break
 
             # Can schedule this request.
@@ -1367,7 +1369,7 @@ class Scheduler:
                 "total_num_cumulative_preemption=%d", seq_group.request_id,
                 preemption_mode, self.num_cumulative_preemption + 1)
         self.num_cumulative_preemption += 1
-
+        logger.info(f"start preemption using {preemption_mode} for {seq_group}")
         if preemption_mode == PreemptionMode.RECOMPUTE:
             self._preempt_by_recompute(seq_group)
         elif preemption_mode == PreemptionMode.SWAP:

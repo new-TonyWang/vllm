@@ -306,9 +306,9 @@ class LocalOrDistributedWorkerBase(WorkerBase):
 
         model_input, worker_input, kwargs = inputs
         num_steps = worker_input.num_steps
-
+        
         self.execute_worker(worker_input)
-
+        logger.info(f"execute_worker and prepare input time:{time.perf_counter()-start_time} us")
         # If there is no input, we don't need to execute the model.
         if worker_input.num_seq_groups == 0:
             return []
@@ -323,7 +323,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                     and self.observability_config.collect_model_execute_time):
                 orig_model_execute_time = intermediate_tensors.tensors.get(
                     "model_execute_time", torch.tensor(0)).item()
-
+        execute_model_start = time.perf_counter()
         output = self.model_runner.execute_model(
             model_input=model_input,
             kv_caches=self.kv_cache[worker_input.virtual_engine]
@@ -332,7 +332,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             num_steps=num_steps,
             **kwargs,
         )
-
+        logger.info(f"execute_model time:{time.perf_counter()-execute_model_start} us")
         model_execute_time = time.perf_counter() - start_time
         if not get_pp_group().is_last_rank:
             # output is IntermediateTensors

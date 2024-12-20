@@ -354,6 +354,7 @@ async def benchmark(
         best_of=best_of,
         use_beam_search=use_beam_search,
     )
+    print(test_input)
     test_output = await request_func(request_func_input=test_input)
     if not test_output.success:
         raise ValueError(

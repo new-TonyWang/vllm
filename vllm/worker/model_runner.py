@@ -952,6 +952,7 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
         # in numpy and only copy the actual input content at every iteration.
         # The shape of the cached block table will be
         # (max batch size to capture, max context len to capture / block size).
+        # print(f"self.max_batchsize_to_capture={self.max_batchsize_to_capture}")
         self.graph_block_tables = np.zeros(
             (self.max_batchsize_to_capture, self.get_max_block_per_batch()),
             dtype=np.int32)
@@ -1064,10 +1065,12 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                     "This may lead to less accurate results!")
 
         if envs.VLLM_TEST_DYNAMO_GRAPH_CAPTURE and supports_dynamo():
+            from vllm.plugins import get_torch_compile_backend
+            backend = get_torch_compile_backend() or "eager"
             self.model = torch.compile(
                 self.model,
                 fullgraph=envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
-                backend="eager")
+                backend=backend)
 
     def save_sharded_state(
         self,
@@ -1540,7 +1543,7 @@ class ModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
             model_forward_start = torch.cuda.Event(enable_timing=True)
             model_forward_end = torch.cuda.Event(enable_timing=True)
             model_forward_start.record()
-
+        # logger.info(f"AttentionMetadata prefill number:{model_input.attn_metadata.num_prefills}, decode number:{model_input.attn_metadata.num_decode_tokens}, input_ids_shape:{model_input.input_tokens.shape}")
         hidden_or_intermediate_states = model_executable(
             input_ids=model_input.input_tokens,
             positions=model_input.input_positions,

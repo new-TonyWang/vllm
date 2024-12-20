@@ -238,7 +238,7 @@ async def async_request_openai_completions(
             "best_of": request_func_input.best_of,
             "max_tokens": request_func_input.output_len,
             "logprobs": request_func_input.logprobs,
-            "stream": True,
+            "stream": False,
         }
         headers = {
             "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}"
@@ -262,28 +262,30 @@ async def async_request_openai_completions(
 
                         chunk = remove_prefix(chunk_bytes.decode("utf-8"),
                                               "data: ")
-                        if chunk == "[DONE]":
-                            latency = time.perf_counter() - st
-                        else:
-                            data = json.loads(chunk)
+                        print("chunk==",chunk)
+                        # if chunk :
+                            
+                        # else:
+                        latency = time.perf_counter() - st
+                        data = json.loads(chunk)
 
-                            # NOTE: Some completion API might have a last
-                            # usage summary response without a token so we
-                            # want to check a token was generated
-                            if data["choices"][0]["text"]:
-                                timestamp = time.perf_counter()
-                                # First token
-                                if ttft == 0.0:
-                                    ttft = time.perf_counter() - st
-                                    output.ttft = ttft
+                        # NOTE: Some completion API might have a last
+                        # usage summary response without a token so we
+                        # want to check a token was generated
+                        if data["choices"][0]["text"]:
+                            timestamp = time.perf_counter()
+                            # First token
+                            if ttft == 0.0:
+                                ttft = time.perf_counter() - st
+                                output.ttft = ttft
 
-                                # Decoding phase
-                                else:
-                                    output.itl.append(timestamp -
-                                                      most_recent_timestamp)
+                            # Decoding phase
+                            else:
+                                output.itl.append(timestamp -
+                                                    most_recent_timestamp)
 
-                                most_recent_timestamp = timestamp
-                                generated_text += data["choices"][0]["text"]
+                            most_recent_timestamp = timestamp
+                            generated_text += data["choices"][0]["text"]
 
                     output.generated_text = generated_text
                     output.success = True

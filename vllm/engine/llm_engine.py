@@ -53,6 +53,7 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
                                   usage_message)
 from vllm.utils import Counter, Device
 from vllm.version import __version__ as VLLM_VERSION
+from .global_request_logger import init_global_request_logger,get_global_request_logger
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
@@ -747,6 +748,10 @@ class LLMEngine:
             prompt_adapter_request=prompt_adapter_request,
             trace_headers=trace_headers,
         )
+        global_request_logger = get_global_request_logger()
+        if not global_request_logger.is_begin():
+            global_request_logger.set_begin(arrival_time)
+        # global_request_logger.request_begin(request_id,arrival_time)
 
     def _create_sequence_group_with_sampling(
         self,
@@ -1165,15 +1170,17 @@ class LLMEngine:
 
         # Clear outputs for each new scheduler iteration
         ctx.request_outputs.clear()
-
+        global_request_logger = get_global_request_logger()
         # Skip the scheduler if there are any remaining steps in the seq groups.
         # This ensures that the scheduler is only called again when the current
         # batch has completed.
         if not self._has_remaining_steps(seq_group_metadata_list):
             # Schedule iteration
+            global_request_logger.schedule_begin(time.time())
             (seq_group_metadata_list, scheduler_outputs,
              allow_async_output_proc
              ) = self.scheduler[virtual_engine].schedule()
+            global_request_logger.schedule_end(time.time())
 
             ctx.seq_group_metadata_list = seq_group_metadata_list
             ctx.scheduler_outputs = scheduler_outputs
@@ -1220,8 +1227,37 @@ class LLMEngine:
                 execute_model_req.async_callback = self.async_callbacks[
                     virtual_engine]
 
+            current_time = time.time()
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                all_prompt_length = 0
+                prompt_batches_number = 0
+                request_ids = []
+                for item in execute_model_req.seq_group_metadata_list:
+                    request_ids.append(item.request_id)
+                    for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        all_prompt_length += value.get_prompt_len()
+                        prompt_batches_number += 1
+                global_request_logger.prefill_step_begin(current_time,request_ids)
+            else:
+                decode_batch = 0
+                for item in execute_model_req.seq_group_metadata_list:
+                    for key in item.seq_data.keys():
+                        decode_batch+=1
+                global_request_logger.decode_step_begin(current_time)
+
+
+            # Execute the model.
             outputs = self.model_executor.execute_model(
-                execute_model_req=execute_model_req)
+                execute_model_req)
+
+            current_time = time.time()
+            
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                global_request_logger.prefill_step_end(current_time,all_prompt_length,prompt_batches_number)
+            else:
+                global_request_logger.decode_step_end(current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+            logger.info("="*50)
 
             # We need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.

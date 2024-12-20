@@ -25,6 +25,8 @@ from vllm.transformers_utils.tokenizer import (AnyTokenizer, MistralTokenizer,
 from vllm.transformers_utils.tokenizer_group import TokenizerGroup
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils import Counter, deprecate_kwargs, is_list_of
+from vllm.engine.global_request_logger import init_global_request_logger,get_global_request_logger
+import time
 
 logger = init_logger(__name__)
 
@@ -178,6 +180,7 @@ class LLM:
         self.llm_engine = LLMEngine.from_engine_args(
             engine_args, usage_context=UsageContext.LLM_CLASS)
         self.request_counter = Counter()
+        init_global_request_logger()
 
     def get_tokenizer(self) -> AnyTokenizer:
         return self.llm_engine.get_tokenizer_group(TokenizerGroup).tokenizer
@@ -706,7 +709,7 @@ class LLM:
                 postfix=(f"est. speed input: {0:.2f} toks/s, "
                          f"output: {0:.2f} toks/s"),
             )
-
+        global_request_logger = get_global_request_logger()
         # Run the engine.
         outputs: List[Union[RequestOutput, EmbeddingRequestOutput]] = []
         total_in_toks = 0
@@ -715,6 +718,8 @@ class LLM:
             step_outputs = self.llm_engine.step()
             for output in step_outputs:
                 if output.finished:
+                    # global_request_logger.request_finish(output.request_id,time.time())
+                    # global_request_logger.print_timeline(output.request_id)
                     outputs.append(output)
                     if use_tqdm:
                         if isinstance(output, RequestOutput):
