@@ -8,6 +8,8 @@ from dataclasses import dataclass, field, fields
 import math
 import json
 from copy import deepcopy
+import vllm.envs as envs
+import os
 BEGIN="BeginTime"
 
 logging = init_logger(__name__)
@@ -146,10 +148,12 @@ class GlobalRequestLogger():
         self.token_generated = 0
         now = int(round(time.time()*1000))
         now02 = time.strftime('%Y_%m_%d_%H_%M_%S',time.localtime(now/1000))
-        self.timeline_export_file=f"/data/tywang/workspace/llm_test/vllm_timeline/timeline_{now02}.txt"
-        logging.info(f"Saving timeline into, {self.timeline_export_file}")
-        with open(self.timeline_export_file,"w") as f:
-            f.write(" ")
+        self.timeline_export_file=None
+        if envs.VLLM_TIMELINE_TRACE_DIR is not None:
+            self.timeline_export_file=os.path.join(envs.VLLM_TIMELINE_TRACE_DIR,f"timeline_{now02}.txt")
+            logging.info(f"Saving timeline into, {self.timeline_export_file}")
+            with open(self.timeline_export_file,"w") as f:
+                f.write(" ")
         logging.info(f"GlobalRequestLogger init. ")
         self.begin = False
 
@@ -261,7 +265,9 @@ class GlobalRequestLogger():
         self.scheduled_times += 1
         logging.info(f"Scheduled {self.scheduled_times} times, schedule 时间占比:{self.schedule_time_cost/((time-self.system_begin_time)*self.time_scale)} 调度总时间/系统启动总时间， 平均调度时间 :{self.schedule_time_cost/self.scheduled_times} us")
         
-    def export_signle_trace(self,request_id,filename="timeline.txt"):
+    def export_signle_trace(self,request_id,filename=None):
+        if filename is None:
+            return
         timeline = self.request_id_2_timeline[request_id]
         all_events = []
         all_events.append({

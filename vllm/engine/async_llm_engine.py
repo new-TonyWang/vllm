@@ -359,17 +359,22 @@ class _AsyncLLMEngine(LLMEngine):
                 global_request_logger.prefill_step_begin(current_time,request_ids)
             else:
                 decode_batch = 0
+                total_post_kv_len = 0
                 for item in execute_model_req.seq_group_metadata_list:
                     for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
                         decode_batch+=1
+                        total_post_kv_len += value.get_output_len()
                 global_request_logger.decode_step_begin(current_time)
 
             for metadata in execute_model_req.seq_group_metadata_list:
                 request_id = metadata.request_id
                 if metadata.is_prompt:
-                    for key in item.seq_data.keys():
-                        value = item.seq_data.get(key)
-                        all_prompt_length = value.get_prompt_len()
+                    max_prompt_len = 0
+                    for key in metadata.seq_data.keys():
+                        value = metadata.seq_data.get(key)
+                        current_prompt_len = value.get_prompt_len()
+                        max_prompt_len = max(current_prompt_len,max_prompt_len)
                     global_request_logger.prompt_begin(request_id,current_time,all_prompt_length,len(execute_model_req.seq_group_metadata_list),prompt_batches_number)
                 else:
                     global_request_logger.decode_begin(request_id,current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
@@ -378,18 +383,24 @@ class _AsyncLLMEngine(LLMEngine):
             outputs = await self.model_executor.execute_model_async(
                 execute_model_req)
 
-            current_time = time.time()
+            finish_forward_time = time.time()
             for metadata in execute_model_req.seq_group_metadata_list:
                 request_id = metadata.request_id
                 if metadata.is_prompt:
-                    global_request_logger.prompt_end(request_id,current_time)
+                    global_request_logger.prompt_end(request_id,finish_forward_time)
                 else:
-                    global_request_logger.decode_end(request_id,current_time)
+                    global_request_logger.decode_end(request_id,finish_forward_time)
             
             if execute_model_req.seq_group_metadata_list[0].is_prompt:
-                global_request_logger.prefill_step_end(current_time,all_prompt_length,prompt_batches_number)
+                global_request_logger.prefill_step_end(finish_forward_time,all_prompt_length,prompt_batches_number)
+                # token_throughput = (prompt_batches_number*max_prompt_len)/(finish_forward_time-current_time)
+                # p_mfu = self.mfu_calculator.calculate_prefill_mfu(prompt_batches_number,max_prompt_len,token_throughput)
+                # logger.info(f"Prompt MFU:{p_mfu}")
             else:
-                global_request_logger.decode_step_end(current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+                global_request_logger.decode_step_end(finish_forward_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+                # token_throughput = (decode_batch)/(finish_forward_time-current_time)
+                # d_mfu = self.mfu_calculator.calculate_decode_mfu(decode_batch,1,total_post_kv_len,token_throughput)
+                # logger.info(f"Decode MFU:{d_mfu}")
             logger.info("="*50)
             # we need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.

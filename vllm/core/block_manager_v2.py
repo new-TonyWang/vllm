@@ -144,7 +144,7 @@ class BlockSpaceManagerV2(BlockSpaceManager):
         if num_free_gpu_blocks - num_required_blocks >= self.watermark_blocks:
             return AllocStatus.OK
         else:
-            logger.info(f"allocate later for {seq_group}, num_required_blocks: {num_required_blocks}, num_free_gpu_blocks: {num_free_gpu_blocks} \n watermark_blocks: {self.watermark_blocks} \n ")
+            logger.info(f"allocate later for {seq_group}, num_required_blocks: {num_required_blocks}, num_free_gpu_blocks: {num_free_gpu_blocks} watermark_blocks: {self.watermark_blocks} \n ")
             return AllocStatus.LATER
 
     def _allocate_sequence(self, seq: Sequence) -> BlockTable:

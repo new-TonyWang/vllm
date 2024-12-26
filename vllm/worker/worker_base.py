@@ -19,7 +19,8 @@ from vllm.utils import (enable_trace_function_call_for_thread,
 from vllm.worker.model_runner_base import (BroadcastableModelInput,
                                            ModelRunnerBase,
                                            ModelRunnerInputBase)
-
+import vllm.envs as envs
+import csv
 logger = init_logger(__name__)
 
 
@@ -180,6 +181,14 @@ class LocalOrDistributedWorkerBase(WorkerBase):
     is_driver_worker: bool
     model_runner: ModelRunnerBase
     observability_config: Optional[ObservabilityConfig] = None
+    if envs.VLLM_INFER_RECORD_DIR:
+        now = int(round(time.time()*1000))
+        now02 = time.strftime('%Y_%m_%d_%H_%M_%S',time.localtime(now/1000))
+        record_time_file = os.path.join(envs.VLLM_INFER_RECORD_DIR,f"{now02}.csv")
+        logger.info(f"save infer time to {record_time_file}")
+        columns = ["p_or_d","batch_size","max_seq_len","total_num_actual_tokens","time","num_tokens_per_sec"]
+        with open(record_time_file,"w") as f:
+            csv.DictWriter(f,fieldnames=columns).writeheader()
 
     @property
     @abstractmethod
@@ -291,7 +300,55 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             return self._get_driver_input_and_broadcast(execute_model_req)
         else:
             return self._get_worker_input_from_broadcast()
-
+    
+    def export_status(self,infer_time,execute_model_req:ExecuteModelRequest): 
+            total_num_actual_tokens = 0
+            if execute_model_req.seq_group_metadata_list[0].is_prompt:
+                all_prompt_length = 0
+                prompt_batches_number = 0
+                max_prompt_len = 0
+                request_ids = []
+                for item in execute_model_req.seq_group_metadata_list:
+                    request_ids.append(item.request_id)
+                    for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        current_prompt_len = value.get_prompt_len()
+                        all_prompt_length += current_prompt_len
+                        max_prompt_len = max(current_prompt_len,max_prompt_len)
+                        prompt_batches_number += 1
+                tokens_per_second = all_prompt_length/infer_time
+                p_or_d = "prefill"
+                batch_size = prompt_batches_number
+                max_seq_len = max_prompt_len
+                total_num_actual_tokens = all_prompt_length
+            else:
+                decode_batch = 0
+                total_post_kv_len = 0
+                for item in execute_model_req.seq_group_metadata_list:
+                    for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        decode_batch+=1
+                        total_post_kv_len += value.get_output_len()
+                tokens_per_second = decode_batch/infer_time
+                p_or_d = "decode"
+                batch_size=decode_batch
+                max_seq_len = 1
+                total_num_actual_tokens = batch_size
+            row = {
+                "p_or_d" : p_or_d,
+                "batch_size" : batch_size,
+                "max_seq_len" :max_seq_len,
+                "total_num_actual_tokens":total_num_actual_tokens,
+                "time": infer_time,
+                "num_tokens_per_sec":tokens_per_second
+            }
+            with open(self.record_time_file,"a") as f:
+                csv_wrirer = csv.DictWriter(f,fieldnames=self.columns)
+                csv_wrirer.writerow(row)
+                
+            
+            
+                
     def execute_model(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
@@ -308,7 +365,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         num_steps = worker_input.num_steps
         
         self.execute_worker(worker_input)
-        logger.info(f"execute_worker and prepare input time:{time.perf_counter()-start_time} us")
+        # logger.info(f"execute_worker and prepare input time:{time.perf_counter()-start_time} us")
         # If there is no input, we don't need to execute the model.
         if worker_input.num_seq_groups == 0:
             return []
@@ -332,7 +389,7 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             num_steps=num_steps,
             **kwargs,
         )
-        logger.info(f"execute_model time:{time.perf_counter()-execute_model_start} us")
+        # logger.info(f"execute_model time:{time.perf_counter()-execute_model_start} us")
         model_execute_time = time.perf_counter() - start_time
         if not get_pp_group().is_last_rank:
             # output is IntermediateTensors
@@ -349,7 +406,9 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             for o in output:
                 o.model_execute_time = (orig_model_execute_time +
                                         model_execute_time)
-
+        # logger.info(f"pp group{get_pp_group().is_first_rank},tp group{get_tp_group().is_first_rank}")
+        if envs.VLLM_INFER_RECORD_DIR and execute_model_req and get_pp_group().is_first_rank and get_tp_group().is_first_rank:
+            self.export_status(model_execute_time,execute_model_req)
         # output is List[SamplerOutput]
         return output
 

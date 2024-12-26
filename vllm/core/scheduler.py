@@ -321,12 +321,12 @@ class Scheduler:
             version)
 
         num_gpu_blocks = cache_config.num_gpu_blocks
-        # if num_gpu_blocks:
-            # num_gpu_blocks //= pipeline_parallel_size
+        if num_gpu_blocks:
+            num_gpu_blocks //= pipeline_parallel_size
 
         num_cpu_blocks = cache_config.num_cpu_blocks
-        # if num_cpu_blocks:
-            # num_cpu_blocks //= pipeline_parallel_size
+        if num_cpu_blocks:
+            num_cpu_blocks //= pipeline_parallel_size
 
         # Create the block space manager.
         self.block_manager = BlockSpaceManagerImpl(

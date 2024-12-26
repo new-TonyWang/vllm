@@ -60,6 +60,8 @@ if TYPE_CHECKING:
     VLLM_RPC_GET_DATA_TIMEOUT_MS: int = 5000
     VLLM_PLUGINS: Optional[List[str]] = None
     VLLM_TORCH_PROFILER_DIR: Optional[str] = None
+    VLLM_TIMELINE_TRACE_DIR: Optional[str] = None
+    VLLM_INFER_RECORD_DIR: Optional[str] = None
     VLLM_ALLOW_RUNTIME_LORA_UPDATING: bool = False
 
 
@@ -402,6 +404,14 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_TORCH_PROFILER_DIR":
     lambda: (None if os.getenv("VLLM_TORCH_PROFILER_DIR", None) is None else os
              .path.expanduser(os.getenv("VLLM_TORCH_PROFILER_DIR", "."))),
+
+    "VLLM_TIMELINE_TRACE_DIR":
+    lambda: (None if os.getenv("VLLM_TIMELINE_TRACE_DIR", None) is None else os
+             .path.expanduser(os.getenv("VLLM_TIMELINE_TRACE_DIR", "."))),
+
+    "VLLM_INFER_RECORD_DIR":
+    lambda: (None if os.getenv("VLLM_INFER_RECORD_DIR", None) is None else os
+             .path.expanduser(os.getenv("VLLM_INFER_RECORD_DIR", "."))),
 
     # If set, vLLM will use Triton implementations of AWQ.
     "VLLM_USE_TRITON_AWQ":

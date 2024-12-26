@@ -54,6 +54,7 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
 from vllm.utils import Counter, Device
 from vllm.version import __version__ as VLLM_VERSION
 from .global_request_logger import init_global_request_logger,get_global_request_logger
+from .mfu_calculator import MFUCalculator,MFUModelConfig
 
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
@@ -450,6 +451,14 @@ class LLMEngine:
                     get_tokenizer_for_seq,
                 ),
             ))
+        hf_conf = model_config.hf_config
+        mfu_model_cfg = MFUModelConfig(hidden_size=hf_conf.hidden_size,
+                                    intermediate_size=hf_conf.intermediate_size,
+                                    num_attention_heads=hf_conf.num_attention_heads,
+                                    num_hidden_layers=hf_conf.num_hidden_layers,
+                                    num_key_value_heads=hf_conf.num_key_value_heads,
+                                    a100_theoretical_flops=312,num_gpus=parallel_config.tensor_parallel_size)
+        self.mfu_calculator = MFUCalculator(mfu_model_cfg)
 
     def _initialize_kv_caches(self) -> None:
         """Initialize the KV cache in the worker(s).
@@ -1231,18 +1240,24 @@ class LLMEngine:
             if execute_model_req.seq_group_metadata_list[0].is_prompt:
                 all_prompt_length = 0
                 prompt_batches_number = 0
+                max_prompt_len=0
                 request_ids = []
                 for item in execute_model_req.seq_group_metadata_list:
                     request_ids.append(item.request_id)
                     for key in item.seq_data.keys():
                         value = item.seq_data.get(key)
-                        all_prompt_length += value.get_prompt_len()
+                        current_prompt_len = value.get_prompt_len()
+                        all_prompt_length += current_prompt_len
+                        max_prompt_len = max(current_prompt_len,max_prompt_len)
                         prompt_batches_number += 1
                 global_request_logger.prefill_step_begin(current_time,request_ids)
             else:
                 decode_batch = 0
+                total_post_kv_len = 0
                 for item in execute_model_req.seq_group_metadata_list:
                     for key in item.seq_data.keys():
+                        value = item.seq_data.get(key)
+                        total_post_kv_len += value.get_output_len()
                         decode_batch+=1
                 global_request_logger.decode_step_begin(current_time)
 
@@ -1251,12 +1266,18 @@ class LLMEngine:
             outputs = self.model_executor.execute_model(
                 execute_model_req)
 
-            current_time = time.time()
+            finish_forward_time = time.time()
             
             if execute_model_req.seq_group_metadata_list[0].is_prompt:
-                global_request_logger.prefill_step_end(current_time,all_prompt_length,prompt_batches_number)
+                global_request_logger.prefill_step_end(finish_forward_time,all_prompt_length,prompt_batches_number)
+                # token_throughput = (prompt_batches_number*max_prompt_len)/(finish_forward_time-current_time)
+                # p_mfu = self.mfu_calculator.calculate_prefill_mfu(prompt_batches_number,max_prompt_len,token_throughput)
+                # logger.info(f"Prompt MFU:{p_mfu}")               
             else:
-                global_request_logger.decode_step_end(current_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+                global_request_logger.decode_step_end(finish_forward_time,len(execute_model_req.seq_group_metadata_list),decode_batch)
+                # token_throughput = (decode_batch)/(finish_forward_time-current_time)
+                # d_mfu = self.mfu_calculator.calculate_decode_mfu(decode_batch,1,total_post_kv_len,token_throughput)
+                # logger.info(f"Decode MFU:{d_mfu}")
             logger.info("="*50)
 
             # We need to do this here so that last step's sampled_token_ids can
