@@ -186,6 +186,62 @@ class Sampler(nn.Module):
         # speculative decoding.
         self.include_gpu_probs_tensor = False
         self.should_modify_greedy_probs_inplace = False
+        Sampler.set_random_seed_and_use_custom_exp()
+
+    @classmethod
+    def set_random_seed_and_use_custom_exp(cls,seq_len,vocab_size):
+        cls.MAX_RANDOM_POOL_SIZE = seq_len*vocab_size
+        cls.USE_CUSTOM_EXPONENTIAL = True
+        cls.generate_random_pool_from_exponential_distribution_(2048,2048)
+
+    @classmethod
+    def generate_random_pool_from_exponential_distribution_(cls):
+        """
+        从指数分布中生成随机池
+        """
+        cls.RANDOM_EXPONENTIAL_POOL = torch.empty(cls.MAX_RANDOM_POOL_SIZE, dtype=torch.float32,device="cpu")
+        cls.RANDOM_EXPONENTIAL_POOL.exponential_()
+        print("RANDOM_EXPONENTIAL_POOL=",cls.RANDOM_EXPONENTIAL_POOL)
+        cls.RANDOM_EXPONENTIAL_POOL = cls.RANDOM_EXPONENTIAL_POOL.npu()
+        # IS_POOL_INITIALIZED = True
+        
+
+    @classmethod
+    def custom_exponential_(cls, output_shape):
+        """
+        从样本池中随机偏移一个offset，取连续的区域view成output_shape作为输出。
+        参数：
+        pool: 样本池Tensor，一维，在NPU上;
+        output_shape: 输出形状;
+        """
+        # 得到output_shape中的元素个数（output可以是多维张量）
+        num_elements = output_shape.numel()
+        # 确保样本池长度合理
+        pool_size = cls.RANDOM_EXPONENTIAL_POOL.size(0)
+        assert pool_size > 0, "RANDOM_EXPONENTIAL_POOL size must be greater than 0."
+        assert cls.MAX_RANDOM_POOL_SIZE >= num_elements, "Pool size is less than the number of elements in output_shape."
+
+        # 随机生成一个offset，范围在[0, pool_size)
+        offset = torch.randint(0, pool_size, (1,)).item()
+
+        # 使用循环切片逻辑获取所需数据
+        result = []
+        remaining_elements = num_elements
+        current_offset = offset
+
+        while remaining_elements > 0:
+            # 本次可以从池中切片的最大长度
+            slice_length = min(remaining_elements, pool_size - current_offset)
+            # 从当前offset开始切片
+            result.append(cls.RANDOM_EXPONENTIAL_POOL[current_offset:current_offset + slice_length])
+            # 更新剩余数量和offset
+            remaining_elements -= slice_length
+            current_offset = (current_offset + slice_length) % pool_size  # 循环到头部
+
+        # 将所有切片拼接并调整为目标形状
+        result = torch.cat(result)
+        return result.view(output_shape)
+
 
     def _init_sampling_tensors(
         self,
@@ -603,6 +659,28 @@ def _multinomial(
             sample_idx += stride
     return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
+def _multinomial_custom(
+    probs: torch.Tensor,
+    num_samples: int,
+    seq_groups: Optional[List[SequenceGroupToSample]] = None,
+    
+) -> torch.Tensor:
+    if num_samples > 1:
+        probs = probs.repeat_interleave(num_samples, dim=0)
+    # q = torch.empty_like(probs)
+    if seq_groups is None:
+        q = Sampler.custom_exponential_(probs.shape)
+    else:
+        q = torch.empty_like(probs)
+        sample_idx = 0
+        for seq_group in seq_groups:
+            seq_ids = seq_group.seq_ids
+            stride = len(seq_ids) * num_samples
+            assert seq_group.generator is not None
+            q[sample_idx:sample_idx +
+              stride].exponential_(generator=seq_group.generator)
+            sample_idx += stride
+    return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
 def _top_k_top_p_multinomial_with_flashinfer(
         probs: torch.Tensor, top_ks: torch.Tensor, top_ps: torch.Tensor,
@@ -787,6 +865,11 @@ def _sample_with_torch(
                         max_n_in_batch,
                         seq_groups_arg,
                     )
+            elif Sampler.USE_CUSTOM_EXPONENTIAL:
+                multinomial_samples[sampling_type] = _multinomial_custom(
+                    probs[long_sample_indices],
+                    max_n_in_batch,
+                    seq_groups=seq_groups_arg)
             else:
                 multinomial_samples[sampling_type] = _multinomial(
                     probs[long_sample_indices],
