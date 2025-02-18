@@ -177,6 +177,45 @@ class Sampler(nn.Module):
         self.include_gpu_probs_tensor = False
         self.should_modify_greedy_probs_inplace = False
 
+    @classmethod
+    def set_random_seed_and_use_custom_exp(cls,seq_len,vocab_size):
+        cls.MAX_RANDOM_POOL_SIZE = seq_len*vocab_size
+        cls.USE_CUSTOM_EXPONENTIAL = True
+        cls.generate_random_pool_from_exponential_distribution_()
+
+    @classmethod
+    def generate_random_pool_from_exponential_distribution_(cls):
+        """
+        从指数分布中生成随机池
+        """
+        cls.RANDOM_EXPONENTIAL_POOL = torch.empty(cls.MAX_RANDOM_POOL_SIZE, dtype=torch.float32,device="cpu")
+        cls.RANDOM_EXPONENTIAL_POOL.exponential_()
+        print("RANDOM_EXPONENTIAL_POOL=",cls.RANDOM_EXPONENTIAL_POOL)
+        cls.RANDOM_EXPONENTIAL_POOL = cls.RANDOM_EXPONENTIAL_POOL.npu()
+        # IS_POOL_INITIALIZED = True
+        
+
+    @classmethod
+    def custom_exponential_(cls,output_shape):
+        """
+        从样本池中随机偏移一个offset，取连续的区域view成output_shape作为输出。
+        参数：
+        pool: 样本池Tensor，一维，在NPU上;
+        output_shape: 输出形状;
+        """
+        # 得到output_shape中的元素个数（output可以是多维张量）
+        num_elements = output_shape.numel()
+        # 确保offset不会超出pool的边界
+        assert cls.MAX_RANDOM_POOL_SIZE >= num_elements, "Pool size is less than the number of elements in output_shape."
+        # 得到最大可能的offset
+        max_offset = cls.MAX_RANDOM_POOL_SIZE - num_elements
+        # if not cls.IS_POOL_INITIALIZED:
+        #     cls.generate_random_pool_from_exponential_distribution_()
+        # 随机生成一个offset，范围在[0, max_offset]
+        offset = torch.randint(0, max_offset + 1, (1,)).item()
+        # 从pool中取出offset到offset+num_elements的元素，view成output_shape
+        return cls.RANDOM_EXPONENTIAL_POOL[offset:offset + num_elements].view(output_shape)
+
     def _init_sampling_tensors(
         self,
         logits: torch.Tensor,

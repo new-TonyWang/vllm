@@ -268,7 +268,6 @@ class XFormersMetadata(AttentionMetadata, PagedAttentionMetadata):
             cross_block_tables=self.cross_block_tables)
         return self._cached_decode_metadata
 
-
 def _get_attn_bias(
     attn_metadata: XFormersMetadata,
     attn_type: AttentionType,

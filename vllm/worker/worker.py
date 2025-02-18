@@ -165,7 +165,7 @@ class Worker(LocalOrDistributedWorkerBase):
             self.device = torch.device(f"cuda:{self.local_rank}")
             torch.cuda.set_device(self.device)
 
-            _check_if_gpu_supports_dtype(self.model_config.dtype)
+            # _check_if_gpu_supports_dtype(self.model_config.dtype)
             gc.collect()
             torch.cuda.empty_cache()
             self.init_gpu_memory = torch.cuda.mem_get_info()[0]

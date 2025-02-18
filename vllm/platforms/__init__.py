@@ -51,6 +51,23 @@ try:
 except Exception:
     pass
 
+is_npu = False
+
+try:
+    import torch_npu  # noqa: F401
+    is_npu = True
+except Exception:
+    pass
+
+is_xpu = False
+
+try:
+    import torch
+    if hasattr(torch, 'xpu') and torch.xpu.is_available():
+        is_xpu = True
+except Exception:
+    pass
+
 is_cpu = False
 try:
     from importlib.metadata import version
@@ -75,6 +92,9 @@ elif is_xpu:
 elif is_cpu:
     from .cpu import CpuPlatform
     current_platform = CpuPlatform()
+elif is_npu:
+    from .ascend import AscendPlatform
+    current_platform = AscendPlatform()
 else:
     current_platform = UnspecifiedPlatform()
 
