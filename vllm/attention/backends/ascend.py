@@ -397,7 +397,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        kv_cache: List[torch.Tensor],
+        kv_cache: torch.Tensor,
         attn_metadata: AscendMetadata,
         k_scale: float = 1.0,
         v_scale: float = 1.0,
@@ -425,11 +425,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
             raise NotImplementedError("Encoder self-attention and "
                                       "encoder/decoder cross-attention "
                                       "are not implemented for "
-                                      "PallasAttentionBackendImpl")
+                                      "AscendAttentionBackendImpl")
         # view q k v to BSH
         num_tokens = query.shape[0]
 
-        if kv_cache is not None:
+        if kv_cache is not None and kv_cache.numel() > 0:
             slot_indices = attn_metadata.slot_mapping
             key_cache, value_cache = kv_cache[0], kv_cache[1]
             AscendPagedAttention.write_to_paged_cache(
@@ -458,33 +458,65 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     seq_len=attn_metadata.max_prefill_seq_len,
                     batch_size=num_tokens,
                 )
+            if ( kv_cache is None or kv_cache.numel() == 0  or attn_metadata.block_tables is None
+                    or attn_metadata.block_tables.numel() == 0):
+                max_seq_len = attn_metadata.max_prefill_seq_len
 
-            # shape of q/k/v [B,S*H] --> [B,S,N,D]
-            query = query.view(-1, attn_metadata.max_prefill_seq_len,
-                               self.num_heads, self.head_size).transpose(1, 2)
-            key = key.view(-1, attn_metadata.max_prefill_seq_len,
-                           self.num_kv_heads, self.head_size).transpose(1, 2)
-            value = value.view(-1, attn_metadata.max_prefill_seq_len,
-                               self.num_kv_heads,
+                # shape of q/k/v [B,S*H] --> [B,S,N,D]
+                query = query.view(-1, max_seq_len, self.num_heads,
+                                   self.head_size).transpose(1, 2)
+                key = key.view(-1, max_seq_len, self.num_kv_heads,
                                self.head_size).transpose(1, 2)
-
-            # FA for prefill phase
-            output = torch_npu.npu_prompt_flash_attention(
-                query,
-                key,
-                value,
-                pse_shift=attn_metadata.pse_shift,
-                atten_mask=attn_metadata.attn_mask,
-                num_heads=self.num_heads,
-                scale_value=1 / math.sqrt(self.head_size),
-                input_layout="BNSD",
-                num_key_value_heads=self.num_kv_heads,
-                pre_tokens=65535,
-                next_tokens=0,
-                sparse_mode=attn_metadata.sparse_mode,
-            )
-            output = output.transpose(1, 2).reshape(
-                num_tokens, -1, self.num_heads * self.head_size)
+                value = value.view(-1, max_seq_len, self.num_kv_heads,
+                                   self.head_size).transpose(1, 2)
+                # FA for prefill phase
+                output = torch_npu.npu_prompt_flash_attention(
+                    query,
+                    key,
+                    value,
+                    atten_mask=attn_metadata.attn_mask,
+                    num_heads=self.num_heads,
+                    scale_value=1 / math.sqrt(self.head_size),
+                    input_layout="BNSD",
+                    num_key_value_heads=self.num_kv_heads,
+                    pre_tokens=65535,
+                    next_tokens=0,
+                    sparse_mode=attn_metadata.sparse_mode,
+                )
+                # reshape to [B,H]
+                output = output.transpose(1, 2).reshape(
+                    num_tokens, self.num_heads * self.head_size)
+            else:
+                # prefix-enabled attention
+                assert attn_type == AttentionType.DECODER, (
+                    "Only decoder-only models support prefix caching")
+                assert attn_metadata.seq_lens is not None
+                assert kv_cache is not None
+                query = query.view(query.shape[0], -1,
+                                   self.num_heads * self.head_size)
+                output = torch.zeros(query.shape,
+                                     device="npu",
+                                     dtype=query.dtype)
+                # TODO (Mengqing Cao): torch_npu.npu_incre_flash_attention
+                # support only when `S == 1`, OPTIMIZE ME when prefix caching
+                # is supported in torch-npu ops.
+                for i in range(query.shape[0]):
+                    # FA for prefill phase
+                    output[i] = torch_npu.npu_incre_flash_attention(
+                        query[i].unsqueeze(0),
+                        key_cache,
+                        value_cache,
+                        num_heads=self.num_heads,
+                        num_key_value_heads=self.num_kv_heads,
+                        scale_value=self.scale,
+                        input_layout="BSH",
+                        block_table=attn_metadata.block_tables,
+                        block_size=key_cache.
+                        shape[1],  # max val of block_size == 512
+                        actual_seq_lengths=attn_metadata.seq_lens,
+                    )
+                # [B,S,H] --> [B,H]
+                output = output.squeeze(1)
 
         elif attn_metadata.decode_metadata:
             # FA for decoding phase

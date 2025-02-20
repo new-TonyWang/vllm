@@ -400,7 +400,7 @@ class Qwen2ForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
                                           quant_config=quant_config)
 
         self.logits_processor = LogitsProcessor(config.vocab_size)
-        self.sampler = Sampler()
+        self.sampler = Sampler(config.vocab_size)
         self.make_empty_intermediate_tensors = (
             self.model.make_empty_intermediate_tensors)
 

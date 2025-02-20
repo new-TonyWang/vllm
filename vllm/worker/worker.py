@@ -451,7 +451,7 @@ def init_worker_distributed_environment(
     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
 
     init_distributed_environment(parallel_config.world_size, rank,
-                                 distributed_init_method, local_rank)
+                                 distributed_init_method, local_rank,backend="hccl")
 
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)

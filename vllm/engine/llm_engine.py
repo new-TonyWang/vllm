@@ -548,8 +548,10 @@ class LLMEngine:
                     MultiprocessingNPUExecutorAsync)
                 executor_class = MultiprocessingNPUExecutorAsync
             elif distributed_executor_backend == "ray":
-                raise NotImplementedError(
-                    "ray is not implemented in Ascend NPU currently")
+                from vllm.executor.ray_npu_executor import (
+                    RayNPUExecutor)
+                executor_class = RayNPUExecutor
+                initialize_ray_cluster(engine_config.parallel_config)
             else:
                 from vllm.executor.npu_executor import NPUExecutorAsync
                 executor_class = NPUExecutorAsync

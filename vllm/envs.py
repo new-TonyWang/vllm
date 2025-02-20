@@ -67,6 +67,7 @@ if TYPE_CHECKING:
     VLLM_SKIP_P2P_CHECK: bool = False
     VLLM_TORCH_COMPILE_LEVEL: int = 0
     VLLM_DISABLED_KERNELS: List[str] = []
+    VLLM_CUSTOM_EXPONENTIAL_MULTIPLIER: int = 0
 
 
 def get_default_cache_root():
@@ -434,6 +435,9 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     "VLLM_DISABLED_KERNELS":
     lambda: [] if "VLLM_DISABLED_KERNELS" not in os.environ else os.environ[
         "VLLM_DISABLED_KERNELS"].split(","),
+    
+    "VLLM_CUSTOM_EXPONENTIAL_MULTIPLIER":
+    lambda: int(os.getenv("VLLM_CUSTOM_EXPONENTIAL_MULTIPLIER", "256")),
 }
 
 # end-env-vars-definition

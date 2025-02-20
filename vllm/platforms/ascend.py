@@ -21,6 +21,7 @@ def device_id_to_physical_device_id(device_id: int) -> int:
 
 class AscendPlatform(Platform):
     _enum = PlatformEnum.ASCEND
+    ray_device_key="NPU"
 
     @classmethod
     def get_device_capability(cls, device_id: int = 0):

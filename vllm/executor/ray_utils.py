@@ -10,7 +10,7 @@ from vllm.executor.msgspec_utils import decode_hook, encode_hook
 from vllm.logger import init_logger
 from vllm.platforms import current_platform
 from vllm.sequence import ExecuteModelRequest, IntermediateTensors
-from vllm.utils import get_ip, is_hip, is_xpu
+from vllm.utils import get_ip, is_hip, is_xpu, is_npu
 from vllm.worker.worker_base import WorkerWrapperBase
 
 logger = init_logger(__name__)
@@ -48,7 +48,12 @@ try:
 
         def get_node_and_gpu_ids(self) -> Tuple[str, List[int]]:
             node_id = ray.get_runtime_context().get_node_id()
-            gpu_ids = ray.get_gpu_ids()
+            device_key = current_platform.ray_device_key
+            if not device_key:
+                raise RuntimeError("current platform %s does not support ray.",
+                                   current_platform.ray_device_key)
+            gpu_ids = ray.get_runtime_context().get_accelerator_ids(
+            )[device_key]
             return node_id, gpu_ids
 
         def execute_model_spmd(
@@ -230,6 +235,10 @@ def initialize_ray_cluster(
     """
     assert_ray_available()
 
+    if current_platform.is_npu():
+        # Auto set visible devices in ray will cause torch.npu.set_device fail
+        os.environ["RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES"] = "1"
+
     # Connect to a ray cluster.
     if is_hip() or is_xpu():
         ray.init(address=ray_address,
@@ -242,7 +251,7 @@ def initialize_ray_cluster(
         # Placement group is already set.
         return
 
-    device_str = "GPU" if not current_platform.is_tpu() else "TPU"
+    device_str = "NPU" if not current_platform.is_tpu() else "TPU"
     # Create placement group for worker processes
     current_placement_group = ray.util.get_current_placement_group()
     if current_placement_group:

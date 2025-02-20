@@ -315,6 +315,13 @@ class PyObjectCache:
 def is_hip() -> bool:
     return torch.version.hip is not None
 
+@lru_cache(maxsize=None)
+def is_npu() -> bool:
+    try:
+        import torch_npu
+    except ImportError:
+        torch_npu = None
+    return torch_npu is not None
 
 @lru_cache(maxsize=None)
 def is_cpu() -> bool:
