@@ -32,13 +32,18 @@ if envs.VLLM_USE_FLASHINFER_SAMPLER and find_spec("flashinfer"):
 else:
     flashinfer_top_k_top_p_sampling = None
 
+from vllm.platforms import current_platform
+from vllm.logger import init_logger
+import vllm.envs as envs
 
-def get_sampler() -> torch.nn.Module:
+logger = init_logger(__name__)
+
+def get_sampler(vocab_size = None) -> torch.nn.Module:
     if envs.VLLM_USE_V1:
         # Lazy import: the v1 package isn't distributed
         from vllm.v1.sample.sampler import Sampler as V1Sampler
         return V1Sampler()
-    return Sampler()
+    return Sampler(vocab_size)
 
 
 # (num_token_ids, num_parent_ids) per sequence group.
@@ -178,7 +183,11 @@ class Sampler(nn.Module):
     in logits for each token in the input prompt.
     """
 
-    def __init__(self):
+    MAX_RANDOM_POOL_SIZE = 1024
+    USE_CUSTOM_EXPONENTIAL=False
+    RANDOM_EXPONENTIAL_POOL=torch.empty(0)
+
+    def __init__(self, vocab_size = None):
         super().__init__()
 
         # Whether or not the SamplerOutput should have on-device tensors
@@ -186,6 +195,59 @@ class Sampler(nn.Module):
         # speculative decoding.
         self.include_gpu_probs_tensor = False
         self.should_modify_greedy_probs_inplace = False
+        if current_platform.device_type == "npu" and vocab_size is not None:
+            Sampler.set_random_seed_and_use_custom_exp(vocab_size)
+
+    @classmethod
+    def set_random_seed_and_use_custom_exp(cls,vocab_size):
+        cls.MAX_RANDOM_POOL_SIZE = envs.VLLM_CUSTOM_EXPONENTIAL_MULTIPLIER * vocab_size
+        logger.info(f"Using custom exponential with pool size={cls.MAX_RANDOM_POOL_SIZE} , which vocab_size is {vocab_size}")
+        cls.USE_CUSTOM_EXPONENTIAL = True
+        cls.generate_random_pool_from_exponential_distribution_()
+
+    @classmethod
+    def generate_random_pool_from_exponential_distribution_(cls):
+        """
+        从指数分布中生成随机池
+        """
+        cls.RANDOM_EXPONENTIAL_POOL = torch.empty(cls.MAX_RANDOM_POOL_SIZE, dtype=torch.float32,device="cpu")
+        cls.RANDOM_EXPONENTIAL_POOL.exponential_()
+        cls.RANDOM_EXPONENTIAL_POOL = cls.RANDOM_EXPONENTIAL_POOL.npu()
+
+    @classmethod
+    def custom_exponential_(cls, output_shape):
+        """
+        从样本池中随机偏移一个 offset，取连续的区域 view 成 output_shape 作为输出。
+
+        参数：
+        output_shape: 输出形状;
+        """
+        num_elements = output_shape.numel()
+        pool_size = cls.RANDOM_EXPONENTIAL_POOL.size(0)
+        assert pool_size > 0, "RANDOM_EXPONENTIAL_POOL size must be greater than 0."
+
+        # 预分配输出张量
+        output_tensor = torch.empty(num_elements, dtype=cls.RANDOM_EXPONENTIAL_POOL.dtype, 
+                                    device=cls.RANDOM_EXPONENTIAL_POOL.device)
+
+        # 生成随机偏移量
+        offset = torch.randint(0, pool_size, (1,)).item()
+        
+        remaining_elements = num_elements
+        current_offset = offset
+        write_index = 0  # 追踪写入位置
+
+        while remaining_elements > 0:
+            slice_length = min(remaining_elements, pool_size - current_offset)
+            output_tensor[write_index:write_index + slice_length].copy_(
+                cls.RANDOM_EXPONENTIAL_POOL[current_offset:current_offset + slice_length]
+            )
+            # 更新剩余元素数量
+            remaining_elements -= slice_length
+            write_index += slice_length
+            current_offset = (current_offset + slice_length) % pool_size  # 轮回池子起点
+
+        return output_tensor.view(output_shape)
 
     def _init_sampling_tensors(
         self,
@@ -535,6 +597,28 @@ def _multinomial(
             sample_idx += stride
     return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
+def _multinomial_custom(
+    probs: torch.Tensor,
+    num_samples: int,
+    seq_groups: Optional[List[SequenceGroupToSample]] = None,
+    
+) -> torch.Tensor:
+    if num_samples > 1:
+        probs = probs.repeat_interleave(num_samples, dim=0)
+    # q = torch.empty_like(probs)
+    if seq_groups is None:
+        q = Sampler.custom_exponential_(probs.shape)
+    else:
+        q = torch.empty_like(probs)
+        sample_idx = 0
+        for seq_group in seq_groups:
+            seq_ids = seq_group.seq_ids
+            stride = len(seq_ids) * num_samples
+            assert seq_group.generator is not None
+            q[sample_idx:sample_idx +
+              stride].exponential_(generator=seq_group.generator)
+            sample_idx += stride
+    return probs.div_(q).argmax(dim=1).view(-1, num_samples)
 
 def _top_k_top_p_multinomial_with_flashinfer(
         probs: torch.Tensor, top_ks: torch.Tensor, top_ps: torch.Tensor,
@@ -714,6 +798,11 @@ def _sample_with_torch(
                         max_n_in_batch,
                         seq_groups_arg,
                     )
+            elif Sampler.USE_CUSTOM_EXPONENTIAL:
+                multinomial_samples[sampling_type] = _multinomial_custom(
+                    probs[long_sample_indices],
+                    max_n_in_batch,
+                    seq_groups=seq_groups_arg)
             else:
                 multinomial_samples[sampling_type] = _multinomial(
                     probs[long_sample_indices],
