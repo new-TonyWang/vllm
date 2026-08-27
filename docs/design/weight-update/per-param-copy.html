@@ -1,0 +1,270 @@
+<title>Per-Param Copy 分类</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --surface: #ffffff; --surface-dim: #eeedea;
+    --text: #1a1a2e; --text-2: #4a4a5e; --text-3: #8a8a9a;
+    --border: #d8d6d0; --divider: #e4e2dc;
+    --green: #1a7a42; --green-bg: #e8f5ee; --green-border: #b0dcc0;
+    --blue: #2050a0; --blue-bg: #e8eef8; --blue-border: #b0c4e8;
+    --amber: #9e6c00; --amber-bg: #fef7e0; --amber-border: #e8d090;
+    --red: #b82030; --red-bg: #fce8ea;
+    --code-bg: #eae8e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e0e14; --surface: #18182a; --surface-dim: #222230;
+      --text: #dcdce4; --text-2: #a0a0b0; --text-3: #707080;
+      --border: #333340; --divider: #2a2a38;
+      --green: #50c878; --green-bg: #102820; --green-border: #1a4030;
+      --blue: #6a90d8; --blue-bg: #1a2240; --blue-border: #283858;
+      --amber: #e8b830; --amber-bg: #201c08; --amber-border: #3a3418;
+      --red: #e85858; --red-bg: #280c0c;
+      --code-bg: #222238;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e0e14; --surface: #18182a; --surface-dim: #222230;
+    --text: #dcdce4; --text-2: #a0a0b0; --text-3: #707080;
+    --border: #333340; --divider: #2a2a38;
+    --green: #50c878; --green-bg: #102820; --green-border: #1a4030;
+    --blue: #6a90d8; --blue-bg: #1a2240; --blue-border: #283858;
+    --amber: #e8b830; --amber-bg: #201c08; --amber-border: #3a3418;
+    --red: #e85858; --red-bg: #280c0c;
+    --code-bg: #222238;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; padding: 2.5rem 1.5rem; }
+  .page { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.15rem; }
+  .sub { color: var(--text-3); font-size: 0.76rem; margin-bottom: 1.8rem; }
+  h2 { font-size: 1rem; font-weight: 700; margin: 1.8rem 0 0.5rem; padding-top: 1rem; border-top: 1px solid var(--divider); }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  p, li { font-size: 0.8rem; color: var(--text-2); }
+  p { margin-bottom: 0.5rem; }
+  strong { color: var(--text); }
+  code { font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace; font-size: 0.68rem; background: var(--code-bg); padding: 0.08rem 0.25rem; border-radius: 3px; color: var(--text); }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  pre code { background: none; padding: 0; font-size: 0.66rem; line-height: 1.55; }
+
+  .group-label { display: inline-block; font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.12rem 0.4rem; border-radius: 3px; margin-bottom: 0.4rem; }
+  .gl-green { background: var(--green-bg); color: var(--green); }
+  .gl-amber { background: var(--amber-bg); color: var(--amber); }
+
+  .cat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.8rem; margin: 0.35rem 0; }
+  .cat + .cat { margin-top: 0.5rem; }
+  .cat-num { display: inline-flex; align-items: center; justify-content: center; width: 1.2rem; height: 1.2rem; border-radius: 50%; font-size: 0.62rem; font-weight: 700; margin-right: 0.3rem; flex-shrink: 0; }
+  .cn-green { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+  .cn-blue { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-border); }
+  .cn-amber { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+  .cat-title { font-size: 0.82rem; font-weight: 600; display: flex; align-items: center; margin-bottom: 0.25rem; }
+  .cat-desc { font-size: 0.76rem; color: var(--text-2); line-height: 1.5; }
+  .cat-desc strong { color: var(--text); }
+
+  .arrow-flow { display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap; margin: 0.3rem 0; font-size: 0.72rem; }
+  .af-box { background: var(--surface-dim); border: 1px solid var(--border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.7rem; white-space: nowrap; }
+  .af-op { background: var(--blue-bg); border: 1px solid var(--blue-border); color: var(--blue); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.68rem; font-weight: 600; white-space: nowrap; }
+  .af-arrow { color: var(--text-3); font-size: 0.8rem; flex-shrink: 0; }
+  .af-result { background: var(--green-bg); border: 1px solid var(--green-border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.7rem; white-space: nowrap; }
+  .af-result-amber { background: var(--amber-bg); border: 1px solid var(--amber-border); border-radius: 4px; padding: 0.15rem 0.4rem; font-size: 0.7rem; white-space: nowrap; }
+
+  .note { background: var(--surface-dim); border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.74rem; color: var(--text-2); margin: 0.5rem 0 0.7rem; line-height: 1.5; }
+  .note strong { color: var(--text); }
+
+  .sgl { border-left: 2px solid var(--amber-border); padding-left: 0.5rem; margin: 0.3rem 0 0; font-size: 0.72rem; color: var(--text-3); line-height: 1.45; }
+  .sgl strong { color: var(--text-2); }
+  .sgl-label { font-size: 0.6rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--amber); }
+
+  .tbl-wrap { overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+  thead th { text-align: left; font-weight: 600; padding: 0.3rem 0.4rem; border-bottom: 2px solid var(--border); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); white-space: nowrap; }
+  td { padding: 0.25rem 0.4rem; border-bottom: 1px solid var(--divider); vertical-align: top; color: var(--text-2); }
+  tr:last-child td { border-bottom: none; }
+</style>
+
+<div class="page">
+  <h1>Per-Param Copy 分类</h1>
+  <p class="sub">RL 训练发来新权重时，每个 param 怎么接收、什么时候算完</p>
+
+  <!-- ====== FRAMING ====== -->
+  <h2>核心问题</h2>
+  <p>训练端发来的权重是<strong>原始格式</strong>（checkpoint 格式）。显卡里的 param 可能是<strong>另一种格式</strong>（runtime 格式）——dtype 不同、shape 不同、甚至被压缩过。问题就是：<strong>到达的 tensor 怎么放进显卡里的 param？</strong></p>
+
+  <p>按"到达格式 vs param 格式"的差异程度，所有 param 分成六类。前三类 <strong>copy 完就是终态</strong>，后三类 <strong>copy 只是暂存，需要 finish 阶段统一处理</strong>。</p>
+
+  <!-- ====== GROUP 1: EAGER ====== -->
+  <h2>Copy 完即终态</h2>
+  <span class="group-label gl-green">EAGER 完结 · finish 时 return</span>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-green">①</span> 格式完全一样</div>
+    <div class="cat-desc">到达 BF16，param 也是 BF16，shape 一样。</div>
+    <div class="arrow-flow">
+      <span class="af-box">BF16 tensor</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">copy_</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">done</span>
+    </div>
+    <div class="cat-desc">大多数层都是这个——attention 的 qkv、dense mlp、layernorm。占 88 个 PWAL 实现中的绝大部分。</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> 完全相同——<code>weight_loader</code> 的 <code>copy_</code>，主线和 Miles 无区别。</div>
+  </div>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-green">②</span> dtype 不同，纯换单位</div>
+    <div class="cat-desc">到达 BF16，param 存的是 FP16（或反过来）。<code>copy_</code> <strong>自动转换 dtype</strong>，一对一，不需要额外信息。</div>
+    <div class="arrow-flow">
+      <span class="af-box">BF16 tensor</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">copy_（自动 cast）</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">FP16 param · done</span>
+    </div>
+    <div class="cat-desc">就像把美元换成欧元——汇率固定、一步完成。</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> 完全相同——<code>copy_</code> 自动 cast。</div>
+  </div>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-blue">③</span> dtype 不同，需要量化，但 scale 自包含</div>
+    <div class="cat-desc">到达 BF16，param 存的是 FP8 <strong>+ 一个 scale</strong>。不能裸 <code>copy_</code>——要先算 scale 再压缩。但关键是：<strong>算 scale 只需要看这一片 tensor 本身</strong>（blockwise / per-channel），不需要等其他 tensor 到齐。所以可以到一片、量化一片、存一片。</div>
+    <div class="arrow-flow">
+      <span class="af-box">BF16 tensor 一片</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">量化（算 scale + 压缩）</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">FP8 qweight + scale · done</span>
+    </div>
+    <div class="cat-desc"><strong>② 和 ③ 的区别：</strong>② 是换单位（BF16→FP16，<code>copy_</code> 自动做，一个输入一个输出）；③ 是压缩（BF16→FP8，要算缩放比例，<strong>一个输入产生两个输出</strong>：压缩后的权重 + scale）。但两者都是"到一片处理一片"，不需要等别人。</div>
+    <div class="cat-desc"><strong>③ vs ④ 的分界线——"scale 的范围是否落在单次到达的一片里"：</strong><br>&bull; <strong>③ 自包含</strong>：blockwise（128×128 块内）、per-channel（一行）、per-tensor 但 tensor 没 fuse 别人（如 NVFP4 的 w2，一个 expert 独立到达）<br>&bull; <strong>④ 非自包含</strong>：per-tensor 但 tensor 是 fused 的（如 w1+w3 分两次到，per-tensor scale 要看 cat 后的整体）→ 见下方 ④</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> <strong>Miles trainer 侧预量化</strong>：<code>quantize_params</code> 管道在发送前量化成 checkpoint 格式 → engine 收到 dtype 已匹配，变成 ①。<strong>SGLang engine 侧没有 ③ 的 loader 包装</strong>（NVFP4 的 w2 直接量化是 ③，但 w1+w3 缓冲属于 ④——见下方）。其他量化类型（FP8 block / per-tensor / dense）无 loader 包装，dtype 不匹配时 <code>copy_</code> 做裸 cast（scale=1），超出 FP8 范围的值变 <code>nan</code>，小值归零——<strong>静默损坏，不报错</strong>。</div>
+  </div>
+
+  <!-- ====== GROUP 2: NEED FINISH ====== -->
+  <h2>Copy 只是暂存，需要 finish</h2>
+  <span class="group-label gl-amber">需要 FINISH · 统一 refresh 时处理</span>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-amber">④</span> 需要量化，但 scale 要看全局</div>
+    <div class="cat-desc">到达 BF16，param 存的是 FP8 + <strong>per-tensor scale</strong>。per-tensor = 整个 fused param（比如 gate+up 合并后）只有一个 scale。算这个 scale 需要看所有 tensor 的最大值——但 tensor 是分批到达的，没全到就不知道全局最大值是多少。</div>
+    <div class="arrow-flow">
+      <span class="af-box">BF16 tensor 一片</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">copy_ 进 staging buffer（暂存原始值）</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result-amber">等全部到齐</span>
+    </div>
+    <div class="arrow-flow" style="margin-top:0.15rem">
+      <span class="af-result-amber">finish 时</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">看完整 staging → 算全局 scale → 量化</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">FP8 qweight + scale · done</span>
+    </div>
+    <div class="cat-desc"><strong>③ 和 ④ 的区别：</strong>③ 的 scale 只看这一片（blockwise / per-channel），到一片算一片；④ 的 scale 要看所有片拼起来的全局（per-tensor），必须等齐。</div>
+    <div class="cat-desc"><strong>能不能像 SGLang 那样 eager+缓冲？</strong>可以，但取决于 fused param 多大：</div>
+    <div class="cat-desc" style="padding-left:0.5rem">
+      &bull; <strong>小融合</strong>（qkv_proj / gate_up_proj，2-3 片）：每片到达时记录局部 absmax，最后一片到齐时已知全局 scale → 立刻量化全部暂存片。BF16 暂存 ≈ 几十 MB，可接受。<strong>SGLang 的 <code>cached_a_proj</code> 就是这个模式。</strong><br>
+      &bull; <strong>大融合</strong>（MoE w13_weight，256 experts × gate+up）：BF16 暂存 ≈ <strong>17 GB</strong>（DeepSeek-V3, TP=8）。不可接受，必须放 finish 或彻底规避。
+    </div>
+    <div class="cat-desc"><strong>④ 的三条出路（我们选路 3）：</strong></div>
+    <div class="cat-desc" style="padding-left:0.5rem">
+      <strong>路 1: staging buffer</strong>——单独分配 BF16 buffer 暂存到达的权重，finish 时统一量化写入 FP8 param。代价：buffer = 整个 fused w13 的 BF16 大小（DeepSeek-V3 TP=8 约 17GB）。太贵。<br>
+      <strong>路 2: restore 成 BF16</strong>——学 ⑤ 的 restore，start 时把 FP8 param 临时变回 BF16 格式，copy_ BF16→BF16 无问题，finish 时统一量化回 FP8。暂存 = param 本身，不需要额外 buffer。代价：update 窗口内 param 占 2× 显存（BF16 比 FP8 大一倍），但推理已暂停。<br>
+      <strong>路 3: per-expert eager 缓冲 ✓</strong>——如果 scale 粒度是 per-expert（每个 expert 的 w1+w3 有自己的 scale），只需缓冲 1 个 expert 的 w1（几 MB），w3 到了就 cat → 量化 → 存入。不跨 expert 等待，不需要 finish。<strong>SGLang NVFP4 的 <code>pending_w13_weights</code> 就是这个模式。</strong>
+    </div>
+    <div class="cat-desc"><strong>我们选路 3</strong>：per-expert 粒度的 eager 缓冲。主流量化已转向 block FP8（③ 自包含），per-tensor 的 ④ 场景越来越少，仅剩的（NVFP4 w1+w3）在 per-expert 粒度完全可以 eager 解决。详细的到达粒度 vs 量化粒度分析见 <a href="https://claude.ai/code/artifact/e6463868-a8e0-47e1-9962-7556460cb6e5" style="color:var(--blue)">Fused Param Scale Buffer</a>。</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> <strong>NVFP4 MoE 是 ④ 的 eager 解法</strong>：<code>nvfp4_online.py:get_online_weight_loader</code> 在 weight_loader 内做缓冲——w2（不 fuse）直接量化（实为 ③）；<strong>w1+w3 用 <code>pending_w13_weights</code> 缓冲</strong>，pair 到齐后 <code>cat</code> 一起量化（per-tensor scale 从整体算出），拆回各自 shard 存入。缓冲粒度 = 1 个 expert 的 1 对 w1+w3（很小），不等 finish。<br>
+      Miles 通过 trainer 侧预量化彻底规避 ④。DeepSeek 的 <code>post_load_weights</code> 里 <code>inverse_transform_scale_ue8m0</code> 逆变换补丁是「不规避就得打补丁」的证据。<code>cached_a_proj</code> / <code>pending_indexer_wk</code> 是 attention 侧的同类 eager 缓冲。</div>
+  </div>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-amber">⑤</span> Shape 不同（repack / 压缩布局）</div>
+    <div class="cat-desc">到达 BF16（shape 100×200），param 被 PWAL 重排成了另一种布局（shape 50×400，或 bit-packed 后更小）。按原始 shape 的地图往重排后的 param 搬——位置全乱。</div>
+    <div class="arrow-flow">
+      <span class="af-result-amber">start 时</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">restore: resize_ 回原始 shape</span>
+    </div>
+    <div class="arrow-flow" style="margin-top:0.15rem">
+      <span class="af-box">BF16 tensor</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">copy_ 进已恢复的原始 shape</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result-amber">checkpoint 格式暂存</span>
+    </div>
+    <div class="arrow-flow" style="margin-top:0.15rem">
+      <span class="af-result-amber">finish 时</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">重新排列 → resize_ 回 runtime shape</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">runtime 布局 · done</span>
+    </div>
+    <div class="cat-desc">主要是 INT4/marlin 层。这类层需要三步：恢复形状 → 搬运 → 重新排列。数量很少。</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> Miles 的条件 restore RPC：<code>post_process_weights(restore_weights_before_load=True)</code>，仅当 <code>quant_method</code> 为 compressed-tensors 时触发。engine 侧调 wNa16 的 <code>restore_weights_before_loading</code>（<code>resize_</code> 回 <code>_original_shapes</code>）。finish 时全量重跑 PWAL 完成 marlin repack。</div>
+  </div>
+
+  <div class="cat">
+    <div class="cat-title"><span class="cat-num cn-amber">⑥</span> 派生状态</div>
+    <div class="cat-desc">param 本体（如 <code>kv_b_proj.weight</code>）格式没变，copy_ 正常落位。但模型里还有<strong>从它算出来的二级张量</strong>（如 W_UK_T、W_UV——MLA 注意力的投影矩阵），这些必须用新权重重新算一遍。</div>
+    <div class="arrow-flow">
+      <span class="af-box">BF16 kv_b_proj</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">copy_ 进 param 本体</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result-amber">本体更新了，派生还是旧的</span>
+    </div>
+    <div class="arrow-flow" style="margin-top:0.15rem">
+      <span class="af-result-amber">finish 时</span>
+      <span class="af-arrow">→</span>
+      <span class="af-op">从新本体重算 → copy_ 进预分配的派生张量</span>
+      <span class="af-arrow">→</span>
+      <span class="af-result">派生张量更新 · done</span>
+    </div>
+    <div class="cat-desc">派生张量在冷启动时已经建好了（预分配），finish 只是用新值覆盖。地址不变。</div>
+    <div class="sgl"><span class="sgl-label">Miles/SGLang</span> DeepSeek 的 <code>post_load_weights(weight_names=...)</code>——挂在 <code>load_weights</code> 尾部，增量重算出现 kv_b_proj 的层。用 <code>bind_or_assign(target, source)</code>（target 存在 → <code>copy_</code>，不存在 → 赋值）做 in-place 写入。</div>
+  </div>
+
+  <!-- ====== SUMMARY ====== -->
+  <h2>总结：六类的分布</h2>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>类别</th><th>什么情况</th><th>copy 时</th><th>finish 时</th><th>Miles/SGLang</th><th>占比</th></tr></thead>
+    <tbody>
+      <tr><td><strong>①</strong></td><td>格式完全一样</td><td>copy_</td><td>return</td><td>相同</td><td rowspan="3" style="vertical-align:middle; text-align:center; color:var(--green); font-weight:600">绝大多数</td></tr>
+      <tr><td><strong>②</strong></td><td>纯 dtype cast</td><td>copy_（自动）</td><td>return</td><td>相同</td></tr>
+      <tr><td><strong>③</strong></td><td>量化，scale 自包含（block / per-channel / 非 fused per-tensor）</td><td>量化 + copy_</td><td>return</td><td>Miles 预量化 → 变 ①；NVFP4 w2 直接量化；其他无包装 → 静默损坏</td></tr>
+      <tr><td><strong>④</strong></td><td>量化，scale 跨 fused 多片（per-tensor on fused）</td><td>per-expert eager 缓冲 → 量化 + copy_</td><td>return（已 eager 完成）</td><td>NVFP4 <code>pending_w13</code> eager；Miles 预量化规避</td><td rowspan="3" style="vertical-align:middle; text-align:center; color:var(--amber); font-weight:600">极少数</td></tr>
+      <tr><td><strong>⑤</strong></td><td>shape 不同（repack）</td><td>restore 后 copy_</td><td>重新排列</td><td>条件 restore + 全量 PWAL</td></tr>
+      <tr><td><strong>⑥</strong></td><td>派生状态</td><td>copy_ 进本体</td><td>重算派生</td><td><code>post_load_weights</code> + <code>bind_or_assign</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>设计的核心优势：</strong>①②③ 占绝大多数，eager copy 零开销完成，finish 直接 return；只有极少数 ④⑤⑥ 需要 finish 做事。而且每个 param 属于哪一类，<strong>冷启动时就定死了</strong>，运行时只查表——不需要猜、不需要 flag、不需要"这是不是第二次调用"之类的判断。
+  </div>
+
+  <!-- ====== LIFECYCLE ====== -->
+  <h2>完整生命周期</h2>
+  <pre><code>start_weight_update()
+    ⑤ 类层 restore（resize_ 回 checkpoint shape）
+
+load × N 次（分 bucket 到达）
+    每个 param 按类别：
+      ①② → copy_
+      ③  → 量化 + copy_
+      ④  → per-expert eager 缓冲：w1 到了暂存，w3 到了 cat → 量化 → copy_
+      ⑤  → copy_（已恢复成 checkpoint shape）
+      ⑥  → copy_ 进 param 本体
+
+finish_weight_update()
+    每层 refresh_derived_state()：
+      ①②③④ → return（④ 已在 load 阶段 eager 完成）
+      ⑤    → 重新排列 → resize_ 回 runtime shape
+      ⑥    → 从本体重算 → copy_ 进派生张量</code></pre>
+
+  <div class="note">
+    <strong>为什么没有 graph.refit()：</strong>vLLM 不用 CUDA graph refit（PyTorch 也没暴露这个接口）。方案更简单——所有写入用 <code>copy_</code>，地址（<code>data_ptr</code>）不变，已录制的 CUDA graph 自动读到新数据，零额外操作。⑤ 类层的 <code>resize_</code> 可能换地址，但它发生在推理暂停窗口内、graph 不在 replay，finish 后地址已稳定回 runtime shape。详见 <a href="https://claude.ai/code/artifact/f79830d1-c0f2-46ae-9bc9-4f8061db3aae" style="color:var(--blue)">CUDA Graph Refit 机制分析</a>。
+  </div>
+</div>
