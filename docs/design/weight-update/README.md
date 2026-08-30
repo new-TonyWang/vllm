@@ -15,6 +15,8 @@ RL 训练场景下 vLLM 权重热更新的完整重构方案。基于 88 个 PWA
 | [rfc-landscape.html](rfc-landscape.html) | [SGLang 全景](https://claude.ai/code/artifact/fd60f803-d9d7-44c5-903d-379f14de5dcb) | SGLang/Miles 生态调研：Miles 五步流程、RFC 汇总、三处独立收敛 |
 | [cudagraph-refit.html](cudagraph-refit.html) | [CUDA Graph Refit](https://claude.ai/code/artifact/f79830d1-c0f2-46ae-9bc9-4f8061db3aae) | CUDA Graph 权重更新机制：vLLM 用 copy_() 保地址不变，无需 refit |
 | [layerwise-reload.html](layerwise-reload.html) | [Layerwise Reload](https://claude.ai/code/artifact/3561b288-4535-4e37-b825-378bebb4332a) | Layerwise reload 分析（参考，我们不采用此路径） |
+| [weight-transforms-primer.html](weight-transforms-primer.html) | [权重变换入门](https://claude.ai/code/artifact/4f9216d8-b1b8-477f-9bcf-987510da8e44) | 背景知识：PWAL 的所有操作（reshape/transpose/repack/量化/scale 融合/派生等）从简单到复杂讲解 |
+| [transport-loading-boundary.html](transport-loading-boundary.html) | — | 传输与加载的边界：逐引擎分析（NCCL/NIXL/Mooncake/RDT）、架构边界 |
 
 ## 源码审计
 

@@ -1,0 +1,373 @@
+<title>权重变换入门</title>
+<style>
+  :root {
+    --bg: #f5f4f1; --surface: #ffffff; --surface-dim: #eceae6;
+    --text: #1a1c22; --text-2: #4a4c54; --text-3: #7a7c84;
+    --border: #d4d2cc; --divider: #e2e0da;
+    --copper: #b35820; --copper-bg: #fdf0e6;
+    --teal: #1a7a6a; --teal-bg: #e6f5f0;
+    --blue: #3a6a9a; --blue-bg: #e8eef6;
+    --amber: #9e6c00; --amber-bg: #fef7e0;
+    --red: #b82030; --red-bg: #fce8ea;
+    --code-bg: #e8e6e2;
+    --mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #13141a; --surface: #1a1c24; --surface-dim: #22242c;
+      --text: #dcdee4; --text-2: #a0a2aa; --text-3: #6a6c74;
+      --border: #333540; --divider: #2a2c34;
+      --copper: #e08848; --copper-bg: #281c10;
+      --teal: #50c4a8; --teal-bg: #102820;
+      --blue: #6a9ad0; --blue-bg: #1a2438;
+      --amber: #e8b830; --amber-bg: #201c08;
+      --red: #e85858; --red-bg: #280c0c;
+      --code-bg: #22242e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #13141a; --surface: #1a1c24; --surface-dim: #22242c;
+    --text: #dcdee4; --text-2: #a0a2aa; --text-3: #6a6c74;
+    --border: #333540; --divider: #2a2c34;
+    --copper: #e08848; --copper-bg: #281c10;
+    --teal: #50c4a8; --teal-bg: #102820;
+    --blue: #6a9ad0; --blue-bg: #1a2438;
+    --amber: #e8b830; --amber-bg: #201c08;
+    --red: #e85858; --red-bg: #280c0c;
+    --code-bg: #22242e;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; line-height: 1.6; padding: 2.5rem 1.5rem; }
+  .page { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.15rem; text-wrap: balance; }
+  .sub { color: var(--text-3); font-size: 0.76rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.05rem; font-weight: 700; margin: 2rem 0 0.5rem; padding-top: 1.2rem; border-top: 1px solid var(--divider); }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  p { font-size: 0.82rem; color: var(--text-2); margin-bottom: 0.5rem; }
+  strong { color: var(--text); }
+  code { font-family: var(--mono); font-size: 0.7rem; background: var(--code-bg); padding: 0.08rem 0.25rem; border-radius: 3px; color: var(--text); }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; overflow-x: auto; margin: 0.4rem 0 0.6rem; }
+  pre code { background: none; padding: 0; font-size: 0.66rem; line-height: 1.5; }
+
+  .op { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; margin: 0.6rem 0; }
+  .op-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.3rem; flex-wrap: wrap; }
+  .op-name { font-size: 0.88rem; font-weight: 700; }
+  .op-tag { font-size: 0.58rem; font-weight: 600; padding: 0.08rem 0.3rem; border-radius: 3px; white-space: nowrap; }
+  .tag-safe { background: var(--teal-bg); color: var(--teal); }
+  .tag-caution { background: var(--copper-bg); color: var(--copper); }
+  .tag-danger { background: var(--red-bg); color: var(--red); }
+  .tag-info { background: var(--blue-bg); color: var(--blue); }
+  .op-def { font-size: 0.78rem; color: var(--text-2); margin-bottom: 0.4rem; line-height: 1.5; }
+  .op-def strong { color: var(--text); }
+  .op-impact { font-size: 0.74rem; padding: 0.35rem 0.55rem; border-radius: 5px; margin-top: 0.4rem; line-height: 1.45; }
+  .impact-safe { background: var(--teal-bg); color: var(--text-2); border-left: 3px solid var(--teal); }
+  .impact-caution { background: var(--copper-bg); color: var(--text-2); border-left: 3px solid var(--copper); }
+  .impact-danger { background: var(--red-bg); color: var(--text-2); border-left: 3px solid var(--red); }
+
+  .tbl-wrap { overflow-x: auto; margin: 0.5rem 0 0.8rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+  thead th { text-align: left; font-weight: 600; padding: 0.3rem 0.4rem; border-bottom: 2px solid var(--border); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); white-space: nowrap; }
+  td { padding: 0.28rem 0.4rem; border-bottom: 1px solid var(--divider); vertical-align: top; color: var(--text-2); }
+  tr:last-child td { border-bottom: none; }
+
+  .note { background: var(--surface-dim); border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.74rem; color: var(--text-2); margin: 0.5rem 0 0.7rem; line-height: 1.45; }
+  .note strong { color: var(--text); }
+</style>
+
+<div class="page">
+  <h1>权重变换入门</h1>
+  <p class="sub">PWAL 对权重做的所有操作，从简单到复杂，每个都用大白话讲清楚</p>
+
+  <h2>第一层：不动数据的操作</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">reshape / view</span>
+      <span class="op-tag tag-safe">零开销</span>
+      <span class="op-tag tag-safe">完全可逆</span>
+    </div>
+    <div class="op-def">换个看法，数据一个字节没动。就像同一堆积木，你说它是"4 排 × 6 列"还是"2 排 × 12 列"——积木没挪位置，只是你描述它的方式变了。</div>
+    <pre><code>原始: tensor shape [4096, 11008]   (45M 个数字)
+view: tensor shape [4096, 86, 128] (还是 45M 个数字，排列完全一样)
+
+# PyTorch
+t2 = t1.view(4096, 86, 128)  # 零拷贝，瞬间完成
+t1 = t2.view(4096, 11008)    # 逆操作同样零拷贝</code></pre>
+    <div class="op-impact impact-safe"><strong>weight update 影响：</strong>无。reshape 不改数据，不改地址，copy_ 直接能用。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">dtype cast</span>
+      <span class="op-tag tag-safe">自动</span>
+      <span class="op-tag tag-safe">可逆（有精度损失）</span>
+    </div>
+    <div class="op-def">改变每个数字的存储精度。BF16 用 2 字节存一个数，FP32 用 4 字节。就像把"3.14159"四舍五入成"3.14"——信息量变了，但格式简单、规则固定。</div>
+    <pre><code>BF16 tensor: [1.5, 2.5, 3.5]  (每个 2 字节)
+     ↓ copy_ 进 FP16 param
+FP16 tensor: [1.5, 2.5, 3.5]  (每个 2 字节，PyTorch 自动转换)</code></pre>
+    <div class="op-impact impact-safe"><strong>weight update 影响：</strong><code>copy_</code> 自动做 dtype 转换，不需要额外处理。对应 Per-Param 分类 ②。</div>
+  </div>
+
+  <h2>第二层：移动数据但规则简单</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">transpose</span>
+      <span class="op-tag tag-info">要搬数据</span>
+      <span class="op-tag tag-safe">完全可逆</span>
+    </div>
+    <div class="op-def">行列互换。一张表格的行变成列、列变成行。数据必须物理搬动（因为内存是一行行连续存的，转置后连续性变了）。</div>
+    <pre><code>原始 [3, 4]:          转置后 [4, 3]:
+a b c d               a e i
+e f g h       →       b f j
+i j k l               c g k
+                      d h l
+
+# PyTorch
+t2 = t1.t().contiguous()  # .t() 只改 stride，.contiguous() 才真正搬数据
+t1 = t2.t().contiguous()  # 再转一次就回来了</code></pre>
+    <div class="op-def"><strong>谁在用：</strong>FP8 per-tensor dense linear 的 PWAL 把 <code>[N, K]</code> 转置成 <code>[K, N]</code>，因为 CUTLASS/cuBLAS 要求列主序输入。</div>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>转置后 shape 变了，weight_loader 的 TP shard 标记(<code>output_dim</code>)对不上。需要扩展点 C restore（transpose 回去），copy_ 完再 transpose 回来。对应 Per-Param 分类 ⑤。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">resize_</span>
+      <span class="op-tag tag-caution">可能换地址</span>
+      <span class="op-tag tag-caution">数据不保证</span>
+    </div>
+    <div class="op-def">改变 tensor 占的显存大小。缩小时截断（多出的数据丢了），扩大时新区域是垃圾值。扩大可能导致显存重新分配（地址变了）。</div>
+    <pre><code>原始: [4096, 11008]  (占 ~90MB)
+resize_: [2048, 5504]  (占 ~22MB，后半段数据丢了)
+resize_: [4096, 11008]  (扩回来，但丢的数据不会回来，新区域是垃圾)
+
+# 关键：扩大时如果当前 storage 装不下，PyTorch 分配新的 storage → 地址变了</code></pre>
+    <div class="op-def"><strong>谁在用：</strong>INT4/Marlin repack 后 tensor 变小（bit-packing 压缩）。restore 时需要 <code>resize_</code> 回原大小让 weight_loader 能 copy_ 进来。</div>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>restore 阶段用 <code>resize_</code> 回 checkpoint shape（地址可能变，但推理已暂停）。refresh 阶段<strong>禁止 <code>resize_</code></strong>——只能用 <code>copy_</code> 保地址不变。</div>
+  </div>
+
+  <h2>第三层：量化相关</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">quantize（量化）</span>
+      <span class="op-tag tag-info">一进两出</span>
+      <span class="op-tag tag-safe">可逆（有精度损失）</span>
+    </div>
+    <div class="op-def">把高精度数字压缩成低精度 + 一个缩放因子(scale)。比如 BF16 → FP8：先算出这批数字的最大值(amax)，除以 FP8 能表示的最大值(448)得到 scale，然后每个数除以 scale 再四舍五入到 FP8。</div>
+    <pre><code>BF16 输入:  [300.0, 150.0, 50.0]
+amax = 300.0
+scale = 300.0 / 448.0 = 0.67
+
+FP8 输出:   [448, 224, 75]    ← 压缩后的整数
+scale 输出: 0.67              ← 恢复用的缩放因子
+
+还原: 448 × 0.67 ≈ 300.0  ✓ (有精度损失)</code></pre>
+    <div class="op-def"><strong>关键点：</strong>一个输入产生<strong>两个输出</strong>（压缩后的权重 + scale）。scale 的计算范围决定了是否需要等其他 tensor 到齐——blockwise scale 看 128×128 块内（自包含），per-tensor scale 看整个 tensor（可能跨多片）。</div>
+    <div class="op-impact impact-safe"><strong>weight update 影响：</strong>blockwise 量化对应 Per-Param ③（自包含，eager 做完）。per-tensor on fused param 对应 ④（需要等配对 tensor 到齐）。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">数值重量化 (requant)</span>
+      <span class="op-tag tag-caution">改数值</span>
+    </div>
+    <div class="op-def">先反量化回高精度，再用新的 scale 重新量化。为什么要这么做？因为 QKV 三片各自有自己的 per-tensor scale，合并成 fused qkv_proj 后需要<strong>统一的 scale</strong>——必须先还原、拼起来、算新 amax、重新压缩。</div>
+    <pre><code># FP8 的 process_fp8_weight_tensor_strategy
+q_weight (FP8, scale=0.5) ─┐
+k_weight (FP8, scale=0.3) ─┼→ dequant → concat → 算新 amax → requant → fused_qkv (FP8, scale=0.6)
+v_weight (FP8, scale=0.4) ─┘</code></pre>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>属于 ④ 类——必须等 q/k/v 三片都到齐才能算统一 scale。用 per-expert eager 缓冲解决。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">scale 融合 (scale fusion)</span>
+      <span class="op-tag tag-danger">破坏性</span>
+    </div>
+    <div class="op-def">把 activation scale 乘进 weight scale，推理时省一次乘法。<strong>问题：原始 weight scale 被覆盖了。</strong></div>
+    <pre><code># 融合前
+output = (input / input_scale) @ (weight * weight_scale)  # 两次 scale 运算
+
+# PWAL 里做融合
+weight_scale *= input_scale  # 原始 weight_scale 被覆盖！
+
+# 融合后
+output = (input / input_scale) @ (weight * fused_scale)   # 一次 scale 运算</code></pre>
+    <div class="op-def"><strong>能恢复吗？</strong>大多数情况能——<code>input_scale</code> 还保存在 layer 上，除回去就行。但 FlashInfer B12x 不行：它把 scale 融合后设为 1.0，原始值彻底丢了。</div>
+    <div class="op-impact impact-danger"><strong>weight update 影响：</strong>refresh 时需要先"反融合"（除以 input_scale），再用新权重重新融合。属于 R5 契约（无 destructive 累积）。</div>
+  </div>
+
+  <h2>第四层：硬件专用重排列</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">repack（硬件 tile 重排）</span>
+      <span class="op-tag tag-danger">通常不可逆</span>
+      <span class="op-tag tag-caution">各后端不同</span>
+    </div>
+    <div class="op-def">把数据按特定 GPU kernel 的最快读取顺序重新排列。每个 kernel 对"怎么读最快"有不同要求，所以每个后端的 repack 规则不同、逆操作也不同。</div>
+    <pre><code>原始（checkpoint 格式，通用顺序）:
+  [a, b, c, d, e, f, g, h]
+
+Marlin repack（按 16 行 tile 交错，让 tensor core 高效读取）:
+  [a, e, b, f, c, g, d, h]
+
+AITER shuffle（按 16×16 块排列，AMD CK kernel 专用）:
+  [a, c, e, g, b, d, f, h]
+
+FLASHINFER_TRTLLM（2D→4D 分块，128 行 tile）:
+  shape 从 [N, K] 变成 [K/128, N, 128]</code></pre>
+
+    <div class="op-def"><strong>为什么不可逆？</strong>逆操作需要知道排列规则，但 Marlin/AITER/DEEPGEMM 的 repack 逻辑在 C++/CUDA 库里，<strong>没有暴露逆函数</strong>。光知道原始 shape 不够——<code>resize_</code> 回原 shape 只改大小不改顺序，数据还是乱的。</div>
+
+    <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>后端</th><th>做了什么</th><th>可逆？</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Triton / VLLM_CUTLASS</strong></td><td>什么都不做</td><td>不需要</td></tr>
+        <tr><td><strong>FLASHINFER_CUTLASS</strong></td><td>w1/w3 上下半对调(flip)</td><td>再 flip 一次（自逆）</td></tr>
+        <tr><td><strong>FLASHINFER_TRTLLM</strong></td><td>2D→4D 分块 + 行重排</td><td>可逆（算逆排列）</td></tr>
+        <tr><td><strong>DEEPGEMM</strong></td><td>scale 的 TMA 对齐重排</td><td>没有逆函数</td></tr>
+        <tr><td><strong>AITER (ROCm)</strong></td><td>16×16 块重排</td><td>没有逆函数</td></tr>
+        <tr><td><strong>Marlin</strong></td><td>bit 级 tile 交错</td><td>没有逆函数</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="op-impact impact-danger"><strong>weight update 影响：</strong>不可逆 repack 的层必须 restore（<code>resize_</code> 回 checkpoint shape，旧数据不管了）→ copy_ 新数据 → finish 时重新 repack。对应 Per-Param ⑤。restore 不需要"逆 repack"——只需要让 weight_loader 能放进新数据，然后正向重新 repack。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">bit 级重编码 (bit packing)</span>
+      <span class="op-tag tag-caution">改 shape</span>
+    </div>
+    <div class="op-def">INT4 量化没有原生 4-bit 数据类型，所以把两个 4-bit 值打包进一个 8-bit byte（或 8 个进一个 int32）。打包后 tensor 的 shape 变小（宽度减半或更多）。不同工具的打包方式不一样（AWQ vs GPTQ 的 bit 顺序不同）。</div>
+    <pre><code>原始 INT4 值: [3, 7, 1, 5, 2, 6, 0, 4]  (8 个 4-bit 值)
+pack 进 int32: [0x37152604]              (1 个 32-bit 值)
+
+shape 变化: [4096, 11008] → [4096, 11008/8] = [4096, 1376]</code></pre>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>打包后 shape 变小。restore 时 <code>resize_</code> 回原 shape，copy_ 新数据后重新打包。通常和 Marlin repack 一起做，属于 ⑤。</div>
+  </div>
+
+  <h2>第五层：派生与副本</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">派生计算 (derive)</span>
+      <span class="op-tag tag-info">从 X 算 Y</span>
+      <span class="op-tag tag-safe">可重算</span>
+    </div>
+    <div class="op-def">从一个权重矩阵计算出另一个权重矩阵。源权重变了，派生必须重算。最典型的例子是 MLA：从 <code>kv_b_proj</code> 切分+转置出 <code>W_UK_T</code> 和 <code>W_UV</code>。</div>
+    <pre><code># MLA 权重吸收
+kv_b_proj [N, qk_nope + v_head]
+  ↓ split
+  ├→ W_UK [N, qk_nope]  → permute(1,2,0) → W_UK_T [num_heads, proj, latent]
+  └→ W_UV [N, v_head]   → transpose       → W_UV   [num_heads, latent, v_head]
+
+# 其他派生例子
+_g1_alphas = (w1_scale * a1_scale).squeeze()   # MoE 融合系数
+mHC broadcast weights                          # DS4 多头广播副本
+HPC norm float32 copies                        # 高精度计算用的 float32 拷贝</code></pre>
+    <div class="op-impact impact-safe"><strong>weight update 影响：</strong>源权重 copy_ 更新后，refresh 阶段重算派生、<code>copy_</code> 进预分配好的张量。对应 Per-Param ⑥。派生链可能有两级（<code>W_UK_T_dcp_qrep</code> ← <code>W_UK_T</code> ← <code>kv_b_proj</code>），按依赖顺序刷新。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">副本生成 (physical copy)</span>
+      <span class="op-tag tag-info">额外一份数据</span>
+    </div>
+    <div class="op-def">prefill 和 decode 需要不同的权重布局，有些布局差异无法用 view/stride 表达，必须物理拷贝一份。优先用视图（零显存），只有视图表达不了时才用副本。</div>
+    <pre><code># K3 的 conv 权重
+主参数:           [3·H·128, 4]     ← prefill 用
+fused decode 副本: [3, 4, H·128]    ← decode 用，必须连续，stride 表达不出来
+
+# Mamba2 的 conv 权重（好的例子——用视图代替副本）
+conv_weights = self.conv1d.weight.view(...)  # 零拷贝视图，母体更新它自动跟</code></pre>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>源权重更新后，副本也要重新生成。属于 ⑥ 的子类——"从 canonical param 派生的物理副本"。如果是视图则自动跟着更新，无需额外处理。</div>
+  </div>
+
+  <h2>第六层：装回 layer</h2>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">replace_parameter</span>
+      <span class="op-tag tag-caution">可能换地址</span>
+    </div>
+    <div class="op-def">变换完的 tensor 要装回 layer。<code>replace_parameter</code> 是标准入口（137 个调用），有两种模式：</div>
+    <pre><code># 模式 1：默认——创建新 Parameter，替换旧的
+replace_parameter(layer, "weight", new_tensor)
+# → 新 tensor，新地址。冷启动用这个
+
+# 模式 2：prefer_copy——copy_ 进旧 Parameter
+replace_parameter(layer, "weight", new_tensor, prefer_copy=True)
+# → 旧 tensor 的地址不变，只改数据。weight update 用这个</code></pre>
+    <div class="op-impact impact-caution"><strong>weight update 影响：</strong>我们的 refresh_derived_state 总是用 <code>copy_</code> 写回（等价于 <code>prefer_copy=True</code>），不创建新 tensor。PWAL 冷启动可以用默认模式（新 tensor）。这就是"变换逻辑共享、写回方式不同"。</div>
+  </div>
+
+  <div class="op">
+    <div class="op-head">
+      <span class="op-name">copy_</span>
+      <span class="op-tag tag-safe">地址不变</span>
+      <span class="op-tag tag-safe">自动 cast</span>
+    </div>
+    <div class="op-def">把源 tensor 的数据写入目标 tensor 的已有存储。<strong>不分配新内存，不换地址</strong>。如果 dtype 不同，自动转换。这是 weight update 最核心的操作。</div>
+    <pre><code>param = torch.zeros(4096, 11008, dtype=torch.bfloat16)  # 地址 0xABC
+new_data = torch.randn(4096, 11008, dtype=torch.bfloat16)
+param.copy_(new_data)  # 地址还是 0xABC，数据已更新
+# CUDA graph 录的是 0xABC → 自动读到新数据，无需任何处理</code></pre>
+    <div class="op-impact impact-safe"><strong>weight update 影响：</strong>这是唯一保证地址不变的写入方式。我们的设计核心：所有写入最终都通过 <code>copy_</code>。</div>
+  </div>
+
+  <!-- ====== SUMMARY ====== -->
+  <h2>总结：所有操作一览</h2>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>操作</th><th>动数据吗</th><th>改 shape 吗</th><th>可逆吗</th><th>对 weight update 的影响</th></tr></thead>
+    <tbody>
+      <tr><td><strong>reshape / view</strong></td><td>不动</td><td>改描述，不改存储</td><td>完全可逆</td><td>无影响</td></tr>
+      <tr><td><strong>dtype cast</strong></td><td>改每个值</td><td>可能改（byte 宽度变）</td><td>有精度损失</td><td><code>copy_</code> 自动做</td></tr>
+      <tr><td><strong>transpose</strong></td><td>物理搬动</td><td>行列互换</td><td>完全可逆</td><td>需要 restore + refresh</td></tr>
+      <tr><td><strong>resize_</strong></td><td>可能换 storage</td><td>改大小</td><td>数据不保证</td><td>restore 可用，refresh 禁止</td></tr>
+      <tr><td><strong>量化</strong></td><td>压缩</td><td>可能变</td><td>有精度损失</td><td>③ 或 ④，看 scale 粒度</td></tr>
+      <tr><td><strong>数值重量化</strong></td><td>dequant→requant</td><td>不变</td><td>有精度损失</td><td>④，等多片到齐</td></tr>
+      <tr><td><strong>scale 融合</strong></td><td>覆盖原值</td><td>不变</td><td>大多可逆</td><td>refresh 需反融合</td></tr>
+      <tr><td><strong>repack</strong></td><td>完全重排</td><td>可能变</td><td>通常不可逆</td><td>restore + refresh 重做</td></tr>
+      <tr><td><strong>bit packing</strong></td><td>打包</td><td>变小</td><td>可逆</td><td>restore resize_ + refresh repack</td></tr>
+      <tr><td><strong>派生计算</strong></td><td>从 X 算 Y</td><td>新 tensor</td><td>可重算</td><td>refresh 重算</td></tr>
+      <tr><td><strong>副本生成</strong></td><td>物理拷贝</td><td>可能不同 layout</td><td>可重生成</td><td>refresh 重生成</td></tr>
+      <tr><td><strong>replace_parameter</strong></td><td>装回 layer</td><td>—</td><td>—</td><td>refresh 用 <code>copy_</code> 替代</td></tr>
+      <tr><td><strong>copy_</strong></td><td>原地写入</td><td>不变</td><td>—</td><td>核心操作，保地址不变</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>restore 需要做什么：按操作类型</h2>
+
+  <div class="note">
+    restore 的目标是"把 param 恢复成 weight_loader 认识的 checkpoint 布局"。不需要真正"逆操作"——只需要让新数据能 copy_ 进来就行，旧数据反正要被覆盖。
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>PWAL 做了什么</th><th>restore 要做什么</th><th>为什么这样就够了</th></tr></thead>
+    <tbody>
+      <tr><td>什么都没做</td><td>什么都不做（no-op）</td><td>param 已经是 checkpoint 格式</td></tr>
+      <tr><td>transpose</td><td>transpose 回去</td><td>完全可逆，数据位置恢复正确</td></tr>
+      <tr><td>repack（不可逆）</td><td><code>resize_</code> 回 checkpoint shape</td><td>旧数据是乱的没关系——马上被新数据 copy_ 覆盖</td></tr>
+      <tr><td>bit packing（shape 变小）</td><td><code>resize_</code> 回原 shape</td><td>同上，shape 对了 weight_loader 就能正常工作</td></tr>
+      <tr><td>量化（dtype 变了）</td><td>不需要 restore</td><td><code>copy_</code> 自动处理 dtype 转换，或走在线量化 loader</td></tr>
+      <tr><td>scale 融合</td><td>不需要 restore</td><td>refresh 时从原始值重算，不依赖旧值</td></tr>
+      <tr><td>派生计算</td><td>不需要 restore</td><td>源 param 本体没变布局，refresh 时重算派生</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>完整流程图：</strong>详见 <a href="https://claude.ai/code/artifact/d0e57a92-65e7-4466-8c4b-f727ec1cf4d8" style="color:var(--blue)">Per-Param Copy 分类</a>（六类分类 + 生命周期伪代码）和 <a href="https://claude.ai/code/artifact/b90bc156-90c1-46cb-ba68-08a44bead1ed" style="color:var(--blue)">PWAL 管道全景</a>（88 个实现的完整普查）。
+  </div>
+</div>

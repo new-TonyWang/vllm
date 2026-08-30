@@ -1,0 +1,304 @@
+<title>传输与加载的边界</title>
+<style>
+:root {
+  --ground: #f4f5f7; --surface: #fff; --surface-dim: #e9ebef;
+  --ink: #15181c; --ink-2: #444a52; --ink-3: #737a84;
+  --rule: #d9dce1; --rule-light: #e6e9ed;
+  --copper: #b0521c; --copper-soft: #f6e6da;
+  --blue: #2d6389; --blue-soft: #dce8f0;
+  --green: #0d7a53; --green-soft: #d4eee3;
+  --amber: #91650b; --amber-soft: #f7ecd3;
+  --red: #ad2f2a; --red-soft: #fadedd;
+  --code-bg: #eaecf0;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #12141a; --surface: #1a1d24; --surface-dim: #22262e;
+    --ink: #e5e8ec; --ink-2: #b0b6be; --ink-3: #848b95;
+    --rule: #2e333c; --rule-light: #262a32;
+    --copper: #e08a4e; --copper-soft: #33220f;
+    --blue: #6ba8d0; --blue-soft: #1a2b38;
+    --green: #45c495; --green-soft: #10281f;
+    --amber: #dfae4e; --amber-soft: #2b2210;
+    --red: #e8756e; --red-soft: #2e1614;
+    --code-bg: #252830;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #12141a; --surface: #1a1d24; --surface-dim: #22262e;
+  --ink: #e5e8ec; --ink-2: #b0b6be; --ink-3: #848b95;
+  --rule: #2e333c; --rule-light: #262a32;
+  --copper: #e08a4e; --copper-soft: #33220f;
+  --blue: #6ba8d0; --blue-soft: #1a2b38;
+  --green: #45c495; --green-soft: #10281f;
+  --amber: #dfae4e; --amber-soft: #2b2210;
+  --red: #e8756e; --red-soft: #2e1614;
+  --code-bg: #252830;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 16px; line-height: 1.72; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 780px; margin: 0 auto; padding: 48px 24px 64px; }
+
+h1 { font-size: 26px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.2; margin-bottom: 6px; text-wrap: balance; }
+.lead { font-size: 14px; color: var(--ink-3); margin-bottom: 36px; }
+h2 { font-size: 18px; font-weight: 700; margin: 40px 0 12px; padding-top: 24px; border-top: 1px solid var(--rule); letter-spacing: -0.01em; }
+h2:first-of-type { border-top: none; padding-top: 0; }
+h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
+p { font-size: 14.5px; color: var(--ink-2); margin-bottom: 12px; max-width: 64ch; }
+p strong { color: var(--ink); }
+code { font-family: var(--mono); font-size: 0.88em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+pre { background: var(--code-bg); border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 8px 0 16px; }
+pre code { background: none; padding: 0; font-size: 13px; line-height: 1.55; }
+
+.tag { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 3px; white-space: nowrap; vertical-align: middle; }
+.tag-green { background: var(--green-soft); color: var(--green); }
+.tag-amber { background: var(--amber-soft); color: var(--amber); }
+.tag-red { background: var(--red-soft); color: var(--red); }
+
+.card { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 20px; margin: 12px 0; }
+.card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.card-name { font-size: 15px; font-weight: 700; }
+.card p { margin-bottom: 8px; }
+
+.tbl-wrap { overflow-x: auto; margin: 8px 0 20px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+thead th { text-align: left; font-weight: 650; padding: 6px 8px; border-bottom: 2px solid var(--rule); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-3); white-space: nowrap; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--rule-light); vertical-align: top; color: var(--ink-2); }
+tr:last-child td { border-bottom: none; }
+td strong { color: var(--ink); }
+td code { font-size: 12px; }
+
+.diagram { background: var(--surface-dim); border-radius: 8px; padding: 20px 24px; margin: 16px 0 20px; font-family: var(--mono); font-size: 13px; line-height: 1.6; color: var(--ink-2); overflow-x: auto; white-space: pre; }
+
+.note { background: var(--blue-soft); border-left: 3px solid var(--blue); border-radius: 0 6px 6px 0; padding: 10px 14px; font-size: 13.5px; color: var(--ink-2); margin: 12px 0 16px; line-height: 1.55; }
+.note strong { color: var(--ink); }
+.note-amber { background: var(--amber-soft); border-left-color: var(--amber); }
+.note-green { background: var(--green-soft); border-left-color: var(--green); }
+</style>
+
+<div class="wrap">
+<h1>传输与加载的边界</h1>
+<p class="lead">Weight update 的四种传输引擎如何交付权重，和 model.load_weights() 之间有什么耦合</p>
+
+<!-- ====== SUMMARY ====== -->
+<h2>总览</h2>
+
+<div class="tbl-wrap">
+<table>
+  <thead><tr><th>传输引擎</th><th>交付什么</th><th>调用 load_weights？</th><th>与加载的耦合</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>NCCL broadcast</strong></td>
+      <td>checkpoint 格式 <code>(name, tensor)</code></td>
+      <td>直接调</td>
+      <td><span class="tag tag-green">解耦</span></td>
+    </tr>
+    <tr>
+      <td><strong>CUDA IPC</strong></td>
+      <td>checkpoint 格式 <code>(name, tensor)</code></td>
+      <td>直接调</td>
+      <td><span class="tag tag-green">解耦</span></td>
+    </tr>
+    <tr>
+      <td><strong>Sparse NCCL</strong></td>
+      <td>checkpoint 坐标 <code>(name, indices, values)</code></td>
+      <td>展开为 NaN-masked checkpoint tensor 后调 <code>load_weights</code></td>
+      <td><span class="tag tag-green">解耦</span>（<a href="https://github.com/vllm-project/vllm/pull/53751">#53751</a> 重写）</td>
+    </tr>
+    <tr>
+      <td><strong>Sharded RDT</strong></td>
+      <td>按需拉取的 checkpoint 切片</td>
+      <td>init 时用 FakeTensor 录制 plan，replay 时不调</td>
+      <td><span class="tag tag-amber">部分耦合</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note-green note"><strong>我们的设计从 <code>model.load_weights([(name, tensor)])</code> 开始。</strong>传输层负责把 checkpoint 格式的 <code>(name, tensor)</code> 送到这个接口。怎么送的（broadcast / IPC / pull / M2N）不影响 weight_loader 包装和 refresh_derived_state 的逻辑。</div>
+
+<!-- ====== ENGINE 1: NCCL ====== -->
+<h2>逐引擎分析</h2>
+
+<div class="card">
+  <div class="card-head">
+    <span class="card-name">NCCL Broadcast</span>
+    <span class="tag tag-green">完全解耦</span>
+  </div>
+  <p>Trainer broadcast 完整的 checkpoint 格式 tensor（HF <code>named_parameters()</code> 的 name + 对应 tensor）。Engine 每收到一个就调一次 <code>model.load_weights([(name, weight)])</code>。</p>
+  <pre><code># nccl_engine.py:213-221 — 逐 tensor 接收
+for name, dtype_name, shape in zip(...):
+    weight = torch.empty(shape, dtype=dtype, device=self.device)
+    self.model_update_group.broadcast(weight, src=0)
+    self.model.load_weights([(name, weight)])   # ← 标准接口
+    del weight</code></pre>
+  <p><strong>与加载的关系：</strong>零耦合。传输层只管 broadcast + 拼出 <code>(name, tensor)</code>。name 是 checkpoint name（如 <code>model.layers.0.mlp.gate_proj.weight</code>），tensor 是完整的未分片 checkpoint tensor。<code>load_weights</code> 内部的 <code>weight_loader</code> 负责 TP narrow、expert routing、fused param 拼接。</p>
+  <p><strong>packed 模式：</strong>多个 tensor 打包进一个 buffer 一起 broadcast，减少通信次数。解包后仍然是 <code>(name, tensor)</code> 列表，调同一个 <code>load_weights</code>。打包是传输优化，不影响加载逻辑。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="card-name">CUDA IPC</span>
+    <span class="tag tag-green">完全解耦</span>
+  </div>
+  <p>Trainer 把 tensor 放在 GPU 上，通过 IPC handle 让 engine 直接访问。Engine 用 <code>rebuild_cuda_tensor</code> 拿到 tensor 后，一样调 <code>model.load_weights(weights)</code>。</p>
+  <pre><code># ipc_engine.py:246-247
+with disable_mtp_completeness_check():
+    self.model.load_weights(weights)   # ← 同一个接口</code></pre>
+  <p><strong>与加载的关系：</strong>和 NCCL 完全一样——传输层交付 <code>(name, tensor)</code>，加载层消费它。传输方式从网络 broadcast 变成共享内存访问，但接口不变。</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="card-name">Sparse NCCL</span>
+    <span class="tag tag-green">解耦</span>
+    <span style="font-size:12px;color:var(--ink-3)">（<a href="https://github.com/vllm-project/vllm/pull/53751" style="color:var(--blue);border:none">#53751</a> 重写后）</span>
+  </div>
+  <p>只传<strong>变化的部分</strong>：一组 <code>(name, indices, values)</code>，使用 <strong>checkpoint 坐标</strong>（不是 runtime 坐标）。</p>
+  <p><strong>关键机制：</strong>把 sparse patch 展开为完整 checkpoint shape 的 tensor，未改位置填 NaN。然后 monkey-patch <code>copy_</code> 让 NaN 位置保留原值，最后走标准 <code>model.load_weights()</code>。</p>
+  <pre><code># checkpoint_weight_patch.py — 核心逻辑
+# 1. sparse → 完整 checkpoint tensor（NaN = 不改）
+flat = torch.full((numel,), float("nan"), dtype=patch.dtype)
+flat.index_copy_(0, patch.indices, patch.values)
+checkpoint_tensor = flat.view(patch.shape)
+
+# 2. monkey-patch copy_ 保留 NaN 位置的原值
+def copy_non_nan_(dst, src):
+    return torch.where(torch.isnan(src), dst, src, out=dst)
+
+# 3. 走标准 load_weights → weight_loader 做 TP narrow / routing
+model.load_weights([(name, checkpoint_tensor)])</code></pre>
+  <p><strong>与加载的关系：</strong>和 NCCL / IPC 一样走 <code>model.load_weights()</code>。TP narrow、expert routing、stacked_params_mapping 全部复用。Checkpoint name → param 的映射由 model loader 处理，传输层不需要知道 runtime layout。</p>
+  <p><strong>限制：</strong>sparse-loader contract 要求最终写入必须是 same-shaped floating-point <code>copy_</code>。不支持 composed loader、multi-stage loader、custom-write 路径。Start/finish 仍是 no-op（sparse patch 只修改已存在的值，不触发 shape 变化或派生状态刷新）。</p>
+  <div class="note"><strong>和我们设计的关系：</strong>Sparse NCCL 是 delta update（只改部分元素），我们的设计是 full reload（全量替换）。两者互补而非冲突——sparse 适合 LoRA delta 和微调，full reload 适合 RL weight update。Sparse 走 <code>load_weights</code> 意味着 weight_loader 包装（在线量化）理论上也能覆盖它，但 NaN-masked copy_ 的 monkey-patch 需要和量化包装的 dtype 转换兼容。</div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="card-name">Sharded RDT</span>
+    <span class="tag tag-amber">部分耦合</span>
+  </div>
+  <p>Ray Direct Transport。和前三种引擎的根本区别：<strong>不是 trainer push，而是 engine pull</strong>。Engine 主动从 trainer 拉取本 rank 需要的那一片数据。</p>
+
+  <h3>背景：为什么要 pull？</h3>
+  <p>NCCL broadcast 模式下，trainer 把完整 checkpoint tensor broadcast 给所有 rank，每个 rank 的 weight_loader 再 narrow 出自己需要的 shard。这意味着<strong>每个 rank 都收了完整数据但只用一部分</strong>——TP=8 时，7/8 的传输是浪费。</p>
+  <p>RDT 的思路：<strong>让每个 rank 只拉自己需要的那一片</strong>。但要做到这一点，engine 必须提前知道"我这个 rank 需要 checkpoint tensor X 的哪一段"。这个信息不是写在配置文件里的——它是 weight_loader 代码在运行时算出来的（比如 TP rank 2 需要第 2048~3072 行）。所以 RDT 需要"试跑一次"weight_loader 来把这些切片信息提取出来。</p>
+
+  <h3>BAKE：录制购物清单（一次性）</h3>
+  <p>init 时，engine 做一次<strong>模拟加载</strong>来"偷看" weight_loader 会怎么切数据：</p>
+  <pre><code># 简化版 BAKE 流程
+fake_weights = [(name, FakeRDTTensor(name, shape, dtype)) for name, shape, dtype in trainer_metadata]
+model.load_weights(fake_weights)   # ← 假装在加载</code></pre>
+  <p><code>FakeRDTTensor</code> 是零存储的占位 tensor。当 weight_loader 对它做 <code>narrow(dim=0, start=1024, length=1024)</code> 然后 <code>copy_</code> 到 param 时，FakeRDTTensor 不真的搬数据，而是<strong>记录</strong>这个操作："从 checkpoint tensor X 的第 1024 行开始取 1024 行，写到 param Y 的某个位置"。</p>
+  <p>所有 param 录完后，产出一个 <strong>plan</strong>——本 rank 需要从 trainer 拉哪些 slice，每个 slice 写到哪个 param 的哪个 offset。Plan 在 init 时定死，后续所有 weight update 都按同一个 plan 执行。</p>
+
+  <h3>REPLAY：按清单拉货（每次 weight update）</h3>
+  <p>Plan 定好后，每次 weight update <strong>不再调 <code>model.load_weights()</code></strong>。流程变成：</p>
+  <pre><code># 简化版 REPLAY 流程
+for chunk in plan.chunks:
+    slices = pull_from_trainer(chunk.keys)   # 只拉本 rank 需要的 slice
+    for slice, target in zip(slices, chunk.scatters):
+        target.param.data[target.offset:...].copy_(slice)   # 按 plan 直接写</code></pre>
+  <p>不走 weight_loader（它的 narrow 逻辑已经 bake 进 plan 里了），不走 <code>model.load_weights()</code>。</p>
+
+  <h3>当前的问题：被 layerwise 拖累</h3>
+  <p>BAKE + REPLAY 本身是一个很好的优化——只拉需要的 slice，省了大量带宽。但 RDT 在拿到 slice 之后的处理，<strong>完全绑定在 layerwise reload 上</strong>。这给它加了三层不必要的复杂度：</p>
+
+  <p><strong>第一层：清空再重建。</strong><code>start</code> 时把所有 param 放到 meta device（一种"假设备"，表示 tensor 存在但没有实际数据）。GPU 上的 param 数据被丢弃。然后 REPLAY 时逐层 materialize（重新在 GPU 上分配内存），再把拉来的 slice 写进去。</p>
+
+  <p><strong>第二层：layerwise buffer。</strong>因为 param 被清空了，需要一个临时 buffer 来接收数据，然后搬到新分配的 param 里。这就是 layerwise buffer——为了清空再重建而存在的中间暂存区。</p>
+
+  <p><strong>第三层：重跑 PWAL。</strong><code>finish</code> 时调 <code>finalize_layerwise_reload</code>，对所有层重跑 PWAL 做格式转换。但第四章已经论证了为什么不应该重跑 PWAL（幂等性问题、destructive fusion 累乘、kernel 重建等）。</p>
+
+  <pre><code>当前 RDT 流程（六步）：
+  start  → 把 param 放到 meta device（清空 GPU）
+  replay → 分配接收 buffer
+         → 拉 slice 到 buffer
+         → materialize param（重新分配 GPU 内存）
+         → scatter（从 buffer 搬到 param）
+  finish → 跑 PWAL</code></pre>
+
+  <h3>用我们的方案：去掉三层，只剩核心</h3>
+  <p>如果 param 始终在 GPU 上（不清空），REPLAY 拉来的 slice 可以直接 <code>copy_</code> 进已有的 param——不需要 meta device、不需要 materialize、不需要 layerwise buffer：</p>
+
+  <pre><code>改造后 RDT 流程（三步）：
+  start  → 只对 ⑤ 类做 restore（param 留在 GPU 上）
+  replay → 拉 slice → copy_ 进已有 param（一步完成）
+  finish → refresh_derived_state</code></pre>
+
+  <p>Plan 完全不变——BAKE 录制的"从 trainer 拉哪一片、写到 param 的哪个 offset"信息照用。只是执行方式从"清空→重建→搬运"变成"原地覆盖"。</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>环节</th><th>RDT 当前（六步）</th><th>改造后（三步）</th><th>省掉了什么</th></tr></thead>
+    <tbody>
+      <tr><td><strong>start</strong></td><td>param → meta device（清空）</td><td>只对 ⑤ 类 restore</td><td>meta device + 全量清空</td></tr>
+      <tr><td><strong>replay</strong></td><td>分配 buffer → 拉 slice → materialize → scatter</td><td>拉 slice → copy_</td><td>buffer 分配 + materialize + scatter</td></tr>
+      <tr><td><strong>finish</strong></td><td>finalize_layerwise_reload（跑 PWAL）</td><td>refresh_derived_state</td><td>PWAL 重跑 + 其带来的所有幂等性问题</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note-green note"><strong>结论：RDT 的核心价值（BAKE plan + 按需拉取）和我们的设计完全兼容。</strong>被 layerwise 绑定是历史原因——当时 weight update 只有 layerwise 一种后处理方式。去掉 layerwise 依赖后，RDT 反而变得更简洁：六步变三步，不需要 meta device、不需要 layerwise buffer、不需要重跑 PWAL。这是 RDT 引擎自己的改造，不影响我们的核心设计（refresh_derived_state + weight_loader 包装）。</div>
+</div>
+
+<!-- ====== M2N ====== -->
+<h2>NCCL M2N（<a href="https://github.com/vllm-project/vllm/pull/51520" style="color:var(--blue);border:none">#51520</a>，Open）</h2>
+
+<p>M2N 是 NCCL broadcast 的演进：trainer TP=X，inference TP=Y，通过 <a href="https://github.com/NVIDIA/nccl-extensions" style="color:var(--blue);border:none">nccl-extensions</a> 做跨 mesh resharding。Trainer 不需要 materialize 完整 tensor——直接发送本地 shard。</p>
+<p>当前实现有<strong>两条路径</strong>：</p>
+<ul style="padding-left:20px;margin-bottom:8px">
+  <li style="font-size:14px;color:var(--ink-2);margin-bottom:4px"><strong>Direct</strong>：resharding 后直接写入本 rank 的 param storage（跳过 <code>load_weights</code>）—— follow-up 阶段</li>
+  <li style="font-size:14px;color:var(--ink-2);margin-bottom:4px"><strong>Fallback</strong>（当前主要路径）：收完整 tensor 后走 <code>model.load_weights([(name, buffer)])</code>——和 broadcast 行为一致</li>
+</ul>
+<p>有 fallback 条目时走 layerwise reload lifecycle（<code>start/finish_weight_update</code>）；全部 direct 时 start/finish 是 no-op。</p>
+
+<div class="tbl-wrap">
+<table>
+  <thead><tr><th>方面</th><th>NCCL broadcast</th><th>NCCL M2N</th><th>Sharded RDT</th></tr></thead>
+  <tbody>
+    <tr><td><strong>TP narrow 由谁做</strong></td><td>weight_loader（engine 侧）</td><td>当前 fallback：weight_loader；follow-up direct：传输层</td><td>传输层（BAKE 录制后按 plan 拉）</td></tr>
+    <tr><td><strong>交付格式</strong></td><td>完整 checkpoint tensor</td><td>fallback：完整 tensor；direct：已 shard 的 slice</td><td>已 shard 的 slice（无 name，按 plan 定位）</td></tr>
+    <tr><td><strong>调 load_weights？</strong></td><td>每 tensor 调一次</td><td>fallback：调；direct：不调（直接写 param storage）</td><td>不调（REPLAY 直接写）</td></tr>
+    <tr><td><strong>在线量化包装可用？</strong></td><td>直接可用</td><td>fallback：可用；direct：需要额外 hook</td><td>需要改 plan 或在 plan 之外加 hook</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ====== BOUNDARY ====== -->
+<h2>架构边界</h2>
+
+<div class="diagram">传输层                              加载层
+─────────                          ─────
+
+IPC ──────┐                         ┌─ weight_loader (TP narrow + copy_)
+          │                         │
+NCCL ─────┤  (name, tensor)        ├─ weight_loader 包装 (在线量化)
+          │  checkpoint 格式        │
+Sparse ───┤  (NaN-masked tensor)   ├─ refresh_derived_state (finish)
+          │                         │
+M2N ──────┘                         └─ NaN-masked copy_ (sparse delta)
+
+─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+
+RDT ──────── BAKE 录制 plan ──── REPLAY 直接写（吸收了加载层）</div>
+
+<p><strong>上半部分</strong>（IPC / NCCL / Sparse / M2N）都走 <code>model.load_weights()</code>：传输层交付 checkpoint 格式的 <code>(name, tensor)</code>，加载层消费。Sparse NCCL 经 #53751 重写后也走这条路（通过 NaN-masked checkpoint tensor）。我们的 weight_loader 包装和 <code>refresh_derived_state</code> 对这四种引擎完全适用。</p>
+
+<p><strong>下半部分</strong>（RDT）吸收了 weight_loader 的 narrow 逻辑：</p>
+<ul style="padding-left:20px;margin-bottom:12px">
+  <li style="font-size:14px;color:var(--ink-2);margin-bottom:4px">BAKE 时录制 plan，REPLAY 时不调 <code>load_weights</code>，按 plan 直接写</li>
+  <li style="font-size:14px;color:var(--ink-2);margin-bottom:4px">如果要支持在线量化，需要在 BAKE plan 中加入量化 hook，或在 REPLAY 后走 <code>refresh_derived_state</code>（当前走 <code>finalize_layerwise_reload</code>，改为我们的 finish 逻辑即可）</li>
+</ul>
+
+<h2>结论</h2>
+
+<p>Weight update 的传输和加载是<strong>两层问题</strong>。传输层解决"tensor 怎么到达 engine"，加载层解决"到达的 tensor 怎么写进 param"。</p>
+
+<p>对于主流引擎（NCCL / IPC），两层完全解耦——我们的设计不需要关心传输方式。对于 RDT 和未来的 M2N，传输层"吸收"了部分加载逻辑（TP narrow），但这个耦合在我们的包装层之前——weight_loader 包装处理的是 narrow 之后的数据，不受影响。</p>
+
+<p><strong>Finish 的触发也不是加载层判断的</strong>——是 trainer 调 <code>finish_weight_update()</code> RPC。Trainer 知道自己发了多少权重，发完了就调 finish。Engine 不需要自己判断"到齐了没有"。</p>
+</div>

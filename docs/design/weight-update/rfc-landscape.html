@@ -161,6 +161,140 @@
     <div class="card-body">两个并发的 paused weight update 共享 completion state，互相覆盖 future。需要 session/transaction 隔离。</div>
   </div>
 
+  <!-- ====== 2b. PER-QUANT RESTORE ====== -->
+  <h2>逐量化方法：SGLang/Miles 如何处理改 shape 的层</h2>
+
+  <p>前面讲了 Miles 的宏观流程（条件 restore → 传输 checkpoint 格式 → 全量 PWAL）。这一节把每个改 shape 的量化方法拆开看：<strong>SGLang 到底有没有 restore？copy_ 会不会报错？PWAL 怎么兜底？</strong></p>
+
+  <h3>核心机制</h3>
+
+  <div class="note">
+    理解 SGLang 的 restore 策略需要区分两种 weight_loader：<br><br>
+    <strong>dense linear 的 weight_loader</strong>（<code>default_weight_loader</code> / <code>row_parallel_weight_loader</code>）：按 <strong>param 当前 shape</strong> 计算 TP shard offset。如果 PWAL 把 param 从 [N/tp, K] transpose 成了 [K, N/tp]，weight_loader 会按 [K, N/tp] 的 dim 0 大小（= K）去切 loaded_weight——<strong>shard offset 算错</strong>，TP &gt; 1 时 assert 失败或数据写错位置。<br><br>
+    <strong>MoE 的 weight_loader</strong>（<code>_weight_loader_impl</code>）：按 <strong><code>shard_id</code> 语义标记</strong>（w1/w2/w3）决定 shard_dim，不依赖 param.shape。还有 <code>is_transposed</code> flag 可以翻转 shard_dim。而且 MoE weight_loader 内部有 <code>maybe_restore_flashinfer_trtllm_bf16_weight_shape_for_load</code>——遇到 TRTLLM 3D→4D 重排后的 param，先 reshape 回 3D 再 copy。<br><br>
+    <strong>结论：MoE 的 weight_loader 对 shape 变化有内建容忍度，dense linear 没有。</strong>
+  </div>
+
+  <h3>逐方法对照表</h3>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th style="min-width:110px">量化方法</th>
+        <th>PWAL 做了什么</th>
+        <th>shape 怎么变</th>
+        <th style="min-width:100px">TP &gt; 1 能 reload？</th>
+        <th>SGLang restore？</th>
+        <th>为什么实际不出问题</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr style="background:var(--red-bg)">
+        <td><strong>Fp8LinearMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">per-tensor dense</span></td>
+        <td><code>weight.t()</code> 转置 + scale requantize<br><span style="font-size:0.65rem">（第 872/937 行）</span></td>
+        <td>[N/tp, K] → [K, N/tp]<br>行列互换</td>
+        <td style="color:var(--red)"><strong>❌ 不能</strong><br><span style="font-size:0.65rem">weight_loader 按 param 当前 shape 算 shard offset，transpose 后 dim 对不上</span></td>
+        <td style="color:var(--text-3)">无 restore</td>
+        <td><strong>当前 RL 场景都走 block FP8</strong>（DeepSeek-V3/R1 用 <code>weight_block_size=[128,128]</code>）。block FP8 的 PWAL（<code>process_weights_after_loading_block_quant</code>）<strong>不做 transpose</strong>，shape 不变。per-tensor 是老路径，无人用于 RL</td>
+      </tr>
+      <tr>
+        <td><strong>Fp8LinearMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">block quant dense</span></td>
+        <td>block FP8 处理（scale 重排、MXFP8 对齐等）</td>
+        <td><strong>不变</strong></td>
+        <td style="color:var(--green)"><strong>✅ 能</strong></td>
+        <td style="color:var(--text-3)">不需要</td>
+        <td>shape 没变，weight_loader 正常工作。Miles 实际 FP8 场景走的就是这条路径</td>
+      </tr>
+      <tr>
+        <td><strong>Fp8MoEMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">per-tensor MoE</span></td>
+        <td>per-expert requantize（dequant → 统一 scale → requant）</td>
+        <td><strong>不变</strong><br><span style="font-size:0.65rem">[E, 2I/tp, K] 和 [E, K, I/tp] 的 shape 不变，只改数值</span></td>
+        <td style="color:var(--green)"><strong>✅ 能</strong></td>
+        <td style="color:var(--text-3)">不需要</td>
+        <td>MoE PWAL 只改 scale 数值和 requant 权重数据，不改 shape。weight_loader 用 shard_id 定 dim，不受影响</td>
+      </tr>
+      <tr>
+        <td><strong>Fp8MoEMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">FlashInfer TRTLLM</span></td>
+        <td><code>align_fp8_moe_weights_for_flashinfer_trtllm</code>（3D→4D 重排）</td>
+        <td>[E, N, K] → 4D block layout</td>
+        <td style="color:var(--green)"><strong>✅ 能</strong></td>
+        <td style="color:var(--text-3)">weight_loader 内建 restore</td>
+        <td>MoE weight_loader 内部调用 <code>maybe_restore_flashinfer_trtllm_bf16_weight_shape_for_load</code>（第 1087 行）自动 reshape 回 3D。不需要外部 restore</td>
+      </tr>
+      <tr style="background:var(--accent-bg)">
+        <td><strong>wNa16 MoE</strong><br><span style="font-size:0.65rem;color:var(--text-3)">Marlin INT4 repack</span></td>
+        <td>bit reorder + Marlin tile 重排 + bit packing（8 个 INT4 → 1 个 INT32）</td>
+        <td>[E, N, K] → [E, N, K/8]<br><strong>元素数物理变少</strong></td>
+        <td style="color:var(--red)"><strong>❌ 不能</strong><br><span style="font-size:0.65rem">param 变小了，copy_ assert 失败</span></td>
+        <td style="color:var(--accent)"><strong>✅ 有 restore</strong></td>
+        <td>
+          <code>restore_weights_before_loading</code>（第 407 行）：<br>
+          ① 冷启动时记录 <code>_original_shapes</code><br>
+          ② restore 时 <code>param.resize_(orig_shape)</code><br>
+          ③ 设 <code>is_marlin_converted = False</code><br>
+          Miles 按 <code>quant_method == "compressed-tensors"</code> 条件触发
+        </td>
+      </tr>
+      <tr>
+        <td><strong>Mxfp4MoEMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">MXFP4 repack</span></td>
+        <td>MXFP4 量化 + swizzle_blockscale</td>
+        <td>dtype 变（BF16→FP4 packed），shape 可能变</td>
+        <td style="color:var(--amber)"><strong>未验证</strong></td>
+        <td style="color:var(--text-3)">无 restore</td>
+        <td>Miles 用 <code>quantizer_mxfp8.py</code> 在 trainer 侧预量化。engine 侧收到 checkpoint 格式后全量 PWAL。MoE weight_loader 用 shard_id 定 dim，不依赖 param shape</td>
+      </tr>
+      <tr>
+        <td><strong>UnquantizedFusedMoE</strong><br><span style="font-size:0.65rem;color:var(--text-3)">FlashInfer TRTLLM BF16</span></td>
+        <td>3D→4D block layout 重排</td>
+        <td>[E, N, K] → 4D</td>
+        <td style="color:var(--green)"><strong>✅ 能</strong></td>
+        <td style="color:var(--text-3)">weight_loader 内建 restore</td>
+        <td>同 Fp8MoE FlashInfer TRTLLM：weight_loader 内部 <code>maybe_restore_flashinfer_trtllm_bf16_weight_shape_for_load</code> 自动 reshape 回 3D</td>
+      </tr>
+      <tr>
+        <td><strong>AutoAWQMarlinLinearMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">AWQ INT4 dense</span></td>
+        <td>bit reorder + axis transpose + Marlin repack</td>
+        <td>bit packing 后<strong>元素数变少</strong></td>
+        <td style="color:var(--red)"><strong>❌ 不能</strong></td>
+        <td style="color:var(--text-3)">无 restore</td>
+        <td>SGLang 尚未支持 AWQ dense linear 的 RL weight update</td>
+      </tr>
+      <tr>
+        <td><strong>ModelOptNvFp4FusedMoE</strong><br><span style="font-size:0.65rem;color:var(--text-3)">NVFP4 MoE</span></td>
+        <td>NVFP4 量化 + Marlin repack（如适用）</td>
+        <td>视 backend</td>
+        <td style="color:var(--amber)"><strong>视 backend</strong></td>
+        <td style="color:var(--text-3)">无 restore</td>
+        <td>Miles 的 <code>quantizer_nvfp4.py</code> trainer 侧预量化。MoE weight_loader 用 shard_id，不依赖 param shape</td>
+      </tr>
+      <tr>
+        <td><strong>HummingLinearMethod</strong><br><span style="font-size:0.65rem;color:var(--text-3)">pad N/K dense</span></td>
+        <td>pad N→256 对齐、K→128 对齐</td>
+        <td>[N, K] → [ceil(N,256), ceil(K,128)]<br>元素数变多</td>
+        <td style="color:var(--red)"><strong>❌ 不能</strong></td>
+        <td style="color:var(--text-3)">无 restore</td>
+        <td>SGLang 特有后端，尚未对接 RL weight update</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>结论</h3>
+
+  <div class="note">
+    <strong>两层答案：</strong><br><br>
+    <strong>显式 restore 只有一个：wNa16 MoE</strong>（bit packing 让 param 物理变小，copy_ assert 失败）。<br><br>
+    <strong>隐式 restore 有两个：FlashInfer TRTLLM 的 BF16 MoE 和 FP8 MoE</strong>。它们的 restore 逻辑藏在 weight_loader 内部（<code>maybe_restore_flashinfer_trtllm_bf16_weight_shape_for_load</code>），不是外部扩展点。<br><br>
+    <strong>FP8 per-tensor dense 的 transpose 在 TP &gt; 1 时确实会出错</strong>——但当前所有 RL 场景（Miles + DeepSeek 系列）都走 block FP8，不走 per-tensor 路径。这不是"没有 bug"，而是"有问题的路径没人走"。<br><br>
+    <strong>对我们的设计意味着什么：</strong>
+    <ul style="margin-top:0.3rem;padding-left:1.2rem;font-size:0.78rem">
+      <li><strong>dense linear 的 weight_loader 不能容忍 shape 变化</strong>——transpose / pad 后 TP shard offset 算错。我们的 restore 扩展点（C）对 dense linear 是必须的</li>
+      <li><strong>MoE 的 weight_loader 更健壮</strong>——用 shard_id 语义标记而不是 param.shape 来定 shard_dim，还有内建的 TRTLLM reshape restore。但 bit packing（Marlin INT4）仍然需要外部 restore</li>
+      <li>SGLang 把部分 restore 逻辑放在 weight_loader 内部是一种"就近修复"，我们的 C 扩展点把它统一提到外部是更清晰的分层</li>
+    </ul>
+  </div>
+
   <!-- ====== 3. RFCS ====== -->
   <h2>RFC：按对我们的相关性排序</h2>
   <p>重点看 RFC 1 和 RFC 6，次要看 RFC 2。RFC 3/4/5 不触碰 PWAL/derive 核心设计，压成一览。</p>
@@ -238,6 +372,107 @@ for _, module in model.named_modules():
       <tr><td><span class="tag tag-id">sgl#33522</span><br>RFC 5</td><td>Weight Cache Daemon（306s→1s 恢复）；未来 VMM stable VA</td><td>缓存层优化。唯一值得记住的一句：VMM stable VA（物理页换、虚拟地址不变）是 <code>resize_</code>+<code>copy_</code> 的长期替代思路，但依赖 OS/driver；我们的方案更 portable</td></tr>
     </tbody>
   </table>
+  </div>
+
+  <!-- ====== VMM DEEP DIVE ====== -->
+  <h2>深度调研：VMM Stable VA 能替代 copy_ 吗</h2>
+
+  <p>SGLang #33522 提出 VMM stable VA——物理页换、虚拟地址不变——作为 weight update 的长期方向。直觉上这比 <code>copy_</code> 更简单：不用搬数据，直接换指针。<strong>实际分析后结论相反</strong>：在当前 NCCL 传输架构下，remap 比 copy_ 更复杂。</p>
+
+  <h3>VMM remap 的设想</h3>
+
+  <div class="flow">
+    <div class="flow-s"><span class="n">1</span> trainer 通过 NCCL 发来新权重 → 到达 engine GPU 显存（某个物理地址）</div>
+    <div class="flow-s"><span class="n">2</span> <code>cuMemUnmap(0xABC, 旧页)</code> → 断开 param 虚拟地址与旧物理页的映射</div>
+    <div class="flow-s"><span class="n">3</span> <code>cuMemMap(0xABC, 新页)</code> → 把同一个虚拟地址映射到新物理页</div>
+    <div class="flow-s"><span class="n">4</span> <code>data_ptr()</code> 还是 0xABC，CUDA graph 自动读到新数据</div>
+  </div>
+
+  <p>看起来省了一次 <code>copy_</code>。但有四个问题：</p>
+
+  <h3>问题 1：NCCL 到达的 tensor 不是 VMM 分配的</h3>
+
+  <div class="card" style="border-left: 3px solid var(--red)">
+    <div class="card-body">
+      <p>NCCL broadcast 接收的 tensor 是 PyTorch 标准分配器（<code>cudaMalloc</code>）分配的。它的物理页<strong>没有 VMM handle</strong>——你不能把一个 <code>cudaMalloc</code> 的内存 <code>cuMemMap</code> 到另一个虚拟地址。</p>
+      <p>要 remap，你必须：① 用 VMM 分配新物理页 → ② 把 NCCL 数据 <strong>copy 进新物理页</strong> → ③ 再 map 到 param 的虚拟地址。第 ② 步就是一次 copy——和直接 <code>param.copy_(arriving_tensor)</code> 开销一样，但多了 VMM alloc/map/unmap 的系统调用。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <strong>对比：</strong><br>
+    <code>copy_</code> 方案：1 次 copy，零额外系统调用<br>
+    VMM remap 方案：1 次 copy + cuMemCreate + cuMemUnmap + cuMemMap + cuMemRelease
+  </div>
+
+  <h3>问题 2：TP shard 不对齐 VMM 页边界</h3>
+
+  <div class="card" style="border-left: 3px solid var(--red)">
+    <div class="card-body">
+      <p>VMM 的映射粒度是 <strong>2MB 物理页</strong>。weight_loader 做 TP shard 时，从完整 tensor 里 <code>narrow</code> 出一个 slice 写入 fused param 的对应 offset。</p>
+      <p>fused <code>qkv_proj</code> 由 q/k/v 三片拼成，每片的起始 offset 不一定对齐 2MB 页边界。<strong>你不能 remap 一个 tensor 的"中间一段"</strong>——要么整个 param 一起 remap，要么不 remap。</p>
+    </div>
+  </div>
+
+  <pre><code>fused qkv_proj [6144, 4096] (BF16 = 48MB)
+┌─────────────────┬────────────┬────────────┐
+│  q: [4096,4096] │ k:[1024,4096] │ v:[1024,4096] │
+│  offset=0       │ offset=32MB   │ offset=40MB   │
+└─────────────────┴────────────┴────────────┘
+   ↑ 2MB 对齐 ✓     ↑ 32MB 对齐 ✓   ↑ 40MB 对齐 ✓ (这个例子恰好对齐)
+
+但 TP shard 后每个 rank 的 slice 更小，且 k/v 的 offset 在 shard 内不再对齐：
+rank 0 的 qkv: [768, 4096] = 6MB
+┌──────────┬──────────┬──────────┐
+│ q:[512,4096]│ k:[128,4096]│ v:[128,4096]│
+│ 4MB         │ 1MB         │ 1MB         │
+└──────────┴──────────┴──────────┘
+  ↑ 对齐     ↑ 4MB, 对齐   ↑ 5MB, 不对齐 2MB 页！</code></pre>
+
+  <h3>问题 3：MoE 的 512 次 weight_loader 调用</h3>
+
+  <div class="card" style="border-left: 3px solid var(--red)">
+    <div class="card-body">
+      <p>fused <code>w13_weight</code> 的 shape 是 <code>[num_experts, 2*intermediate, hidden]</code>。每个 expert 的 w1 和 w3 单独到达，由 weight_loader 路由到 fused param 的对应 slice。256 experts × 2 projections = <strong>512 次 weight_loader 调用</strong>，每次写 param 的一小片。</p>
+      <p>用 remap：你需要在 512 次调用中把每片数据拼进一组连续的 VMM 物理页，最后一片到了才能 remap 整个 param。本质上就是<strong>自己管理一个 staging buffer</strong>——和 <code>copy_</code> 进已有 param 相比，多了 VMM 页管理，没有任何简化。</p>
+    </div>
+  </div>
+
+  <h3>问题 4：三个扩展点仍然全部需要</h3>
+
+  <div class="card" style="border-left: 3px solid var(--amber)">
+    <div class="card-body">
+      <p>即使用 VMM remap：⑤ 类层的 restore（布局恢复）还是要做，⑥ 类的派生状态还是要重算。remap 只替代了 <code>copy_</code> 这一步，但 <strong><code>copy_</code> 本身不是瓶颈——瓶颈是变换逻辑</strong>（格式转换 + 派生计算），不是搬运。</p>
+    </div>
+  </div>
+
+  <h3>唯一 remap 真正简单的场景</h3>
+
+  <div class="card" style="border-left: 3px solid var(--green)">
+    <div class="card-body">
+      <p><strong>权重已经在 VMM 页里，按正确的 TP shard + fused 布局排好了。</strong>这意味着：</p>
+      <ul>
+        <li>一个常驻 daemon 持有后处理过的权重，存在 VMM 物理页里</li>
+        <li>engine 直接把自己的虚拟地址 remap 到 daemon 的物理页</li>
+        <li><strong>零拷贝，零变换</strong>——daemon 已经做完了 TP shard + PWAL</li>
+      </ul>
+      <p>这就是 SGLang #33522 的 daemon 方案。但前提是<strong>整个权重交付管道都用 VMM</strong>：trainer → daemon → engine 全程 VMM 页，当前 RL 框架（veRL/OpenRLHF/Miles）都是 NCCL broadcast raw tensor，做不到。</p>
+    </div>
+  </div>
+
+  <h3>vLLM 已有 VMM 基础设施</h3>
+
+  <p>vLLM 的 <code>CuMemAllocator</code>（<code>vllm/device_allocator/cumem.py</code>）已经实现了 VMM allocator——这是 sleep mode 的基础。它的 <code>sleep()</code>/<code>wake_up()</code> 就是 unmap/remap 物理页，虚拟地址不变。</p>
+
+  <pre><code>分配时:  cuMemAddressReserve(VA=0xABC) → cuMemCreate(物理页) → cuMemMap(0xABC, 页)
+sleep:   cuMemUnmap(0xABC) → cuMemRelease(页)   # VA 保留，物理页释放
+wake:    cuMemCreate(新页) → cuMemMap(0xABC, 新页)  # 同一个 VA，新物理页</code></pre>
+
+  <p>但 sleep mode 是给<strong>整个模型</strong>做 offload 用的（按 memory pool tag 批量操作），不是 per-param 粒度。要用于 weight update 需要改造为 per-param VMM handle 管理。</p>
+
+  <div class="note">
+    <strong>结论：</strong>VMM remap 在"NCCL 接收 checkpoint 格式 tensor"的场景下<strong>不比 <code>copy_</code> 简单</strong>——数据仍需搬运一次（NCCL buffer → VMM 页），还多了 VMM handle 管理和页对齐约束。它的真正价值在 daemon 预处理 + zero-copy 交付，这是一个不同的传输架构。<strong>我们 v1 用 <code>copy_</code>（portable、零依赖），留 VMM 作为 follow-up 的传输层优化</strong>——vLLM 已有 <code>CuMemAllocator</code> 基础设施，未来可扩展。<br><br>
+    <strong>关键约束：</strong>PyTorch 的 <code>expandable_segments</code>（内部也用 VMM）与 pluggable allocator <strong>互斥</strong>（pytorch/pytorch#147851）。vLLM 在使用 cumem pool 时已显式禁用 <code>expandable_segments</code>。
   </div>
 
   <!-- ====== SUMMARY ====== -->
