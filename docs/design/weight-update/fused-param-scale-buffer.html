@@ -1,0 +1,267 @@
+<title>Fused Param Scale Buffer</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --surface: #fff; --surface-dim: #eeeee8;
+    --text: #1a1a2e; --text-2: #4a4a5c; --text-3: #7a7a8c;
+    --border: #d4d4da; --divider: #e2e2e6;
+    --accent: #2563eb; --accent-bg: #eff4ff;
+    --green: #16a34a; --green-bg: #f0fdf4;
+    --amber: #b45309; --amber-bg: #fffbeb;
+    --red: #dc2626; --red-bg: #fef2f2;
+    --code-bg: #eaeae6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111118; --surface: #1a1a24; --surface-dim: #222230;
+      --text: #e0e0e8; --text-2: #a0a0b0; --text-3: #6a6a7a;
+      --border: #333340; --divider: #2a2a38;
+      --accent: #6b8cff; --accent-bg: #1a2040;
+      --green: #4ade80; --green-bg: #0a2018;
+      --amber: #fbbf24; --amber-bg: #1a1808;
+      --red: #f87171; --red-bg: #1a0808;
+      --code-bg: #252530;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111118; --surface: #1a1a24; --surface-dim: #222230;
+    --text: #e0e0e8; --text-2: #a0a0b0; --text-3: #6a6a7a;
+    --border: #333340; --divider: #2a2a38;
+    --accent: #6b8cff; --accent-bg: #1a2040;
+    --green: #4ade80; --green-bg: #0a2018;
+    --amber: #fbbf24; --amber-bg: #1a1808;
+    --red: #f87171; --red-bg: #1a0808;
+    --code-bg: #252530;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; padding: 2.5rem 1.5rem; }
+  .page { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 0.15rem; text-wrap: balance; }
+  .sub { font-size: 0.78rem; color: var(--text-3); margin-bottom: 1.8rem; }
+  h2 { font-size: 1rem; font-weight: 700; margin: 1.8rem 0 0.4rem; padding-top: 1rem; border-top: 1px solid var(--divider); }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h3 { font-size: 0.88rem; font-weight: 600; margin: 1rem 0 0.3rem; }
+  p { font-size: 0.82rem; color: var(--text-2); margin-bottom: 0.6rem; }
+  p strong { color: var(--text); }
+  code { font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace; font-size: 0.7rem; background: var(--code-bg); padding: 0.08rem 0.22rem; border-radius: 3px; color: var(--text); }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 0.6rem 0.8rem; overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  pre code { background: none; padding: 0; font-size: 0.68rem; line-height: 1.5; }
+  ul { margin: 0.2rem 0 0.6rem; padding-left: 1.1rem; }
+  li { font-size: 0.8rem; color: var(--text-2); margin-bottom: 0.15rem; }
+  li strong { color: var(--text); }
+
+  .tbl-wrap { overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.74rem; font-variant-numeric: tabular-nums; }
+  thead th { text-align: left; font-weight: 600; padding: 0.3rem 0.4rem; border-bottom: 2px solid var(--border); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); white-space: nowrap; }
+  td { padding: 0.28rem 0.4rem; border-bottom: 1px solid var(--divider); vertical-align: top; color: var(--text-2); }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 0.66rem; }
+
+  .tag { display: inline-block; padding: 0.04rem 0.25rem; border-radius: 3px; font-size: 0.58rem; font-weight: 600; white-space: nowrap; }
+  .tag-yes { background: var(--green-bg); color: var(--green); }
+  .tag-no { background: var(--red-bg); color: var(--red); }
+  .tag-dep { background: var(--amber-bg); color: var(--amber); }
+
+  .note { background: var(--surface-dim); border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.76rem; color: var(--text-2); margin: 0.5rem 0 0.7rem; line-height: 1.5; }
+  .note strong { color: var(--text); }
+
+  .callout { border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.76rem; line-height: 1.5; margin: 0.5rem 0 0.7rem; }
+  .callout-accent { background: var(--accent-bg); border-left: 3px solid var(--accent); }
+  .callout-red { background: var(--red-bg); border-left: 3px solid var(--red); }
+  .callout strong { color: var(--text); }
+
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.7rem 0.9rem; margin: 0.5rem 0 0.8rem; overflow-x: auto; }
+  .diagram pre { background: none; margin: 0; padding: 0; }
+  .diagram pre code { font-size: 0.65rem; line-height: 1.45; color: var(--text-2); }
+  .diagram-cap { font-size: 0.65rem; color: var(--text-3); margin-top: 0.3rem; text-align: center; }
+</style>
+
+<div class="page">
+  <h1>什么时候需要 Buffer 暂存？</h1>
+  <p class="sub">在线量化场景下，NCCL 到达粒度 vs 量化 scale 计算粒度的精确分析</p>
+
+  <h2>前置：NCCL 到达粒度 vs Fused Param</h2>
+
+  <p>每次 NCCL 传输到达的是<strong>一个 HF checkpoint tensor</strong>（如 <code>q_proj</code>），但 vLLM runtime 把多个 HF tensor 融合成一个大参数（如 <code>qkv_proj</code>）。三次传输才凑齐一个 fused param：</p>
+
+  <div class="diagram">
+    <pre><code>  q_proj  [4096, 4096]  ──▶ qkv_proj[0:4096, :]       ┐
+  k_proj  [1024, 4096]  ──▶ qkv_proj[4096:5120, :]     ├ 三次传输凑一个 fused param
+  v_proj  [1024, 4096]  ──▶ qkv_proj[5120:6144, :]     ┘</code></pre>
+  </div>
+
+  <h2>问题：在线量化的 scale 什么时候才能算？</h2>
+
+  <p><strong>取决于量化粒度和 fused param 的关系。</strong></p>
+
+  <p>量化 scale 的计算需要看到一定范围的数据。如果这个范围<strong>完全落在单次到达的 shard 内</strong>，就可以 eager 逐 shard 量化；如果范围<strong>跨越多次到达的 shard</strong>，就必须暂存等配对。</p>
+
+  <h3>逐个分析</h3>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>量化粒度</th><th>Scale 看多大范围</th><th>单 shard 能算？</th><th>为什么</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Per-block</strong><br>(128&times;128)</td>
+        <td>128&times;128 个元素</td>
+        <td><span class="tag tag-yes">YES</span></td>
+        <td>q_proj 有 4096 行，每个 block 128 行 &mdash; 32 个完整 block 落在单个 shard 内，边界不跨 shard</td>
+      </tr>
+      <tr>
+        <td><strong>Per-group</strong><br>(group_size=128)</td>
+        <td>128 个连续元素</td>
+        <td><span class="tag tag-yes">YES</span></td>
+        <td>group 沿 input dim 连续排列，完全在单个 shard 内</td>
+      </tr>
+      <tr>
+        <td><strong>Per-channel</strong></td>
+        <td>1 行（output dim）</td>
+        <td><span class="tag tag-yes">YES</span></td>
+        <td>每行独立，不依赖其他 shard</td>
+      </tr>
+      <tr>
+        <td><strong>Per-tensor</strong><br>+ 非 fused param</td>
+        <td>整个 tensor</td>
+        <td><span class="tag tag-yes">YES</span></td>
+        <td><code>o_proj</code>、<code>down_proj</code>、V4 独立 expert &mdash; 一次到达就是完整 tensor</td>
+      </tr>
+      <tr style="background: var(--amber-bg)">
+        <td><strong>Per-tensor</strong><br>+ <strong>fused param</strong></td>
+        <td>整个 fused param</td>
+        <td><span class="tag tag-no">NO</span></td>
+        <td>scale = absmax(整个 qkv) / 448。只有 q 到了，算不出整个 qkv 的 absmax</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>哪些 fused param 会被影响</h2>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Fused param</th><th>由哪些 HF tensor 组成</th><th>per-tensor scale 怎么共享</th><th>出现位置</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>qkv_proj</code></td>
+        <td>q_proj + k_proj + v_proj<br>(3 次传输)</td>
+        <td>一个 scale 覆盖整个 [6144, 4096]<br>需要 q+k+v 全到齐才能算 absmax</td>
+        <td>几乎所有模型的 attention</td>
+      </tr>
+      <tr>
+        <td><code>gate_up_proj</code></td>
+        <td>gate_proj + up_proj<br>(2 次传输)</td>
+        <td>一个 scale 覆盖整个 [28672, 4096]<br>需要 gate+up 都到</td>
+        <td>Dense FFN</td>
+      </tr>
+      <tr>
+        <td><code>w13_weight[eid]</code></td>
+        <td>w1 + w3 per expert<br>(2 次传输)</td>
+        <td>per-expert scale 但 w1+w3 共享<br>需要同一 expert 的 w1+w3 都到</td>
+        <td>MoE FFN (V3 fused 格式)</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout callout-red">
+    <strong>注意：这个问题只存在于在线量化（BF16→FP8）。</strong>如果 trainer 已经量化好了（发 FP8 + scale），scale 随数据一起到达，不需要 inference 侧算 &mdash; 不存在 buffer 问题。
+  </div>
+
+  <h2>需要 buffer 的情况</h2>
+
+  <div class="note">
+    <strong>唯一需要 buffer 暂存的组合 = per-tensor scale &times; fused param &times; 在线量化。</strong>三个条件缺一不可。
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>场景</th><th>为什么需要 buffer</th><th>怎么做</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Per-tensor FP8 在线量化<br>+ <code>qkv_proj</code></td>
+        <td>scale = absmax(整个 qkv) / 448<br>只有 q 到了不够</td>
+        <td>暂存 q/k/v 的 BF16 数据，三个都到了再算 absmax &rarr; 量化 &rarr; 写入 FP8 param</td>
+      </tr>
+      <tr>
+        <td>Per-tensor FP8 在线量化<br>+ <code>w13_weight[eid]</code></td>
+        <td>scale per-expert 但 w1+w3 共享</td>
+        <td>暂存同一 expert 的 w1，等 w3 到了再一起算</td>
+      </tr>
+      <tr>
+        <td>NVFP4 在线量化<br>+ <code>w13_weight[eid]</code></td>
+        <td>SGLang 实现：cat(w1,w3) 整体量化</td>
+        <td>SGLang 用 weight_loader 闭包 buffer：<code>pending_w13_weights[expert_id] = w1</code>，w3 到了再 cat + 量化</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>逐方法实证：scale 粒度与缓冲需求</h2>
+
+  <p>以下基于 vLLM/SGLang 源码逐方法核实。<strong>关键发现：所有"per-tensor"实际都是 per-expert 或 per-param（dense），不存在跨全部 expert 的全局 scale。</strong>缓冲量始终很小（几 MB/pair），per-expert eager 缓冲完全够用。</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>在线量化方法</th><th>scale 粒度</th><th>fused pair 需缓冲？</th><th>缓冲量</th><th>分类</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>FP8 per-tensor</strong> (dense)</td>
+        <td>1 scalar per param</td>
+        <td><span class="tag tag-dep">YES</span> qkv 3 片共享</td>
+        <td>~几 MB</td>
+        <td>④ eager</td>
+      </tr>
+      <tr>
+        <td><strong>FP8 per-tensor</strong> (MoE)</td>
+        <td>1 scalar <strong>per expert</strong><br><code>weight_amax(flatten(1), dim=-1)</code> → shape <code>[E]</code></td>
+        <td><span class="tag tag-dep">YES</span> 同一 expert 的 w1+w3</td>
+        <td>~几 MB / expert</td>
+        <td>④ eager</td>
+      </tr>
+      <tr>
+        <td><strong>NVFP4</strong> (MoE)</td>
+        <td>per-expert decode scale + per-block(group-16)<br><code>weight_amax(flatten(1), dim=-1)</code> → shape <code>[E]</code></td>
+        <td><span class="tag tag-dep">YES</span> 同一 expert 的 w1+w3<br>SGLang: <code>pending_w13_weights</code></td>
+        <td>~几 MB / expert</td>
+        <td>④ eager</td>
+      </tr>
+      <tr>
+        <td><strong>FP8 per-block</strong> (128&times;128)</td>
+        <td>per 128&times;128 block</td>
+        <td><span class="tag tag-yes">NO</span></td>
+        <td>0</td>
+        <td>③</td>
+      </tr>
+      <tr>
+        <td><strong>MXFP4</strong></td>
+        <td>per-32 block (e8m0)</td>
+        <td><span class="tag tag-yes">NO</span></td>
+        <td>0</td>
+        <td>③</td>
+      </tr>
+      <tr>
+        <td><strong>MXFP8</strong></td>
+        <td>per-32 block (e8m0)</td>
+        <td><span class="tag tag-yes">NO</span></td>
+        <td>0</td>
+        <td>③</td>
+      </tr>
+      <tr>
+        <td><strong>INT8</strong> (MoE)</td>
+        <td>per-channel (per expert)</td>
+        <td><span class="tag tag-yes">NO</span></td>
+        <td>0</td>
+        <td>③</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>源码证据：</strong>vLLM <code>online/fp8.py:578</code> — <code>w13_amax = weight_amax(layer.w13_weight.flatten(1), dim=-1)</code>，<code>dim=-1</code> 沿 flattened 的 <code>[hidden]</code> 维取 max，输出 shape <code>[num_experts]</code>，<strong>每个 expert 独立</strong>。SGLang <code>nvfp4_online.py:519</code> 注释原话："Quantize the gated pair together so w1/w3 share one amax-derived per-tensor FP32 scale, matching the serialized NVFP4 convention." —— 缓冲粒度 = 1 个 expert 的 1 对 w1+w3。
+  </div>
+
+  <div class="callout callout-accent">
+    <strong>结论：</strong>buffer 需求是 <strong>per-tensor scale &times; fused pair &times; 在线量化</strong> 三者交叉的数学必然——但实际缓冲量始终是 per-expert 粒度（几 MB），可以在 weight_loader 内 eager 解决（SGLang 已验证），不需要整模型级别的 staging buffer。Block FP8 / MXFP4 / MXFP8 / INT8 每个 block/channel 独立算 scale，到一个 shard 就能量化一个 shard，完全没有这个问题。详见 <a href="https://claude.ai/code/artifact/d0e57a92-65e7-4466-8c4b-f727ec1cf4d8" style="color:var(--accent)">Per-Param Copy 分类 · ④</a>。
+  </div>
+</div>

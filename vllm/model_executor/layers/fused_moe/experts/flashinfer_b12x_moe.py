@@ -92,6 +92,17 @@ class FlashInferB12xExperts(mk.FusedMoEExpertsModular):
         self.w2_sf_mma: torch.Tensor | None = None
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        # Keep the checkpoint representation: this method bakes the global
+        # scale into the block scales below, so the transformed tensors cannot
+        # be used as the source for a later selective refresh.
+        if not hasattr(self, "_base_w13_weight_scale"):
+            self._base_w13_weight_scale = layer.w13_weight_scale.detach().clone()
+            self._base_w2_weight_scale = layer.w2_weight_scale.detach().clone()
+            self._base_w13_weight_scale_2 = (
+                layer.w13_weight_scale_2.detach().clone()
+            )
+            self._base_w2_weight_scale_2 = layer.w2_weight_scale_2.detach().clone()
+
         # Normalise block scales to absorb the per-expert weight global scale
         # (w_gs).  vLLM's NVFP4 convention stores:
         #   block_scale = max_abs * w_gs / fp4_max,  g1_alphas = 1/w_gs
@@ -156,6 +167,88 @@ class FlashInferB12xExperts(mk.FusedMoEExpertsModular):
             k=k2,
             num_groups=num_experts_w2,
         )
+
+    def supports_selective_reload(self) -> bool:
+        """Whether the transformed NVFP4 scales can be refreshed in place."""
+        return hasattr(self, "_base_w13_weight_scale")
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Rebuild baked block scales and MMA layouts after weight updates."""
+        if not self.supports_selective_reload():
+            return
+        relevant = (
+            "w13_weight_scale",
+            "w2_weight_scale",
+            "w13_weight_scale_2",
+            "w2_weight_scale_2",
+        )
+        if updated_parameter_names and not any(
+            name.endswith(relevant) for name in updated_parameter_names
+        ):
+            return
+
+        with torch.no_grad():
+            if updated_parameter_names and any(
+                name.endswith("w13_weight_scale") for name in updated_parameter_names
+            ):
+                self._base_w13_weight_scale.copy_(layer.w13_weight_scale)
+            if updated_parameter_names and any(
+                name.endswith("w2_weight_scale") for name in updated_parameter_names
+            ):
+                self._base_w2_weight_scale.copy_(layer.w2_weight_scale)
+            if updated_parameter_names and any(
+                name.endswith("w13_weight_scale_2")
+                for name in updated_parameter_names
+            ):
+                self._base_w13_weight_scale_2.copy_(layer.w13_weight_scale_2)
+            if updated_parameter_names and any(
+                name.endswith("w2_weight_scale_2") for name in updated_parameter_names
+            ):
+                self._base_w2_weight_scale_2.copy_(layer.w2_weight_scale_2)
+
+            layer.w13_weight_scale.copy_(
+                self._base_w13_weight_scale.float()
+                * self._base_w13_weight_scale_2.view(-1, 1, 1)
+            )
+            layer.w2_weight_scale.copy_(
+                self._base_w2_weight_scale.float()
+                * self._base_w2_weight_scale_2.view(-1, 1, 1)
+            )
+            layer.w13_weight_scale_2.fill_(1.0)
+            layer.w2_weight_scale_2.fill_(1.0)
+            if self.a2_gscale is not None:
+                self.a2_gscale.fill_(1.0)
+
+            self._refresh_mma_layouts()
+
+    def _refresh_mma_layouts(self) -> None:
+        assert self.w1_scale is not None and self.w2_scale is not None
+        num_experts_w1, m1, k1_sf = self.w1_scale.shape
+        w1_sf_mma = flashinfer_convert_sf_to_mma_layout(
+            self.w1_scale.reshape(num_experts_w1 * m1, k1_sf),
+            m=m1,
+            k=k1_sf * 16,
+            num_groups=num_experts_w1,
+        )
+        num_experts_w2, m2, k2_sf = self.w2_scale.shape
+        w2_sf_mma = flashinfer_convert_sf_to_mma_layout(
+            self.w2_scale.reshape(num_experts_w2 * m2, k2_sf),
+            m=m2,
+            k=k2_sf * 16,
+            num_groups=num_experts_w2,
+        )
+        if self.w1_sf_mma is not None and self.w1_sf_mma.shape == w1_sf_mma.shape:
+            self.w1_sf_mma.copy_(w1_sf_mma)
+        else:
+            self.w1_sf_mma = w1_sf_mma
+        if self.w2_sf_mma is not None and self.w2_sf_mma.shape == w2_sf_mma.shape:
+            self.w2_sf_mma.copy_(w2_sf_mma)
+        else:
+            self.w2_sf_mma = w2_sf_mma
 
     @staticmethod
     def activation_format() -> mk.FusedMoEActivationFormat:

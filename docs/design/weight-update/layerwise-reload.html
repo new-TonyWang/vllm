@@ -1,0 +1,579 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>权重定稿 · pwal 与 layerwise reload</title>
+<style>
+:root{
+  --ground:#f4f5f7;--surface:#fff;--surface-dim:#e9ebef;
+  --ink:#15181c;--ink-2:#444a52;--ink-3:#737a84;--ink-4:#a8aeb7;
+  --rule:#d9dce1;--rule-light:#e6e9ed;
+  --copper:#b0521c;--copper-soft:#f6e6da;--copper-wash:rgba(176,82,28,.055);
+  --blue:#2d6389;--blue-soft:#dce8f0;--blue-wash:rgba(45,99,137,.055);
+  --green:#0d7a53;--green-soft:#d4eee3;
+  --amber:#91650b;--amber-soft:#f7ecd3;
+  --red:#ad2f2a;--red-soft:#fadedd;
+  --violet:#63479f;--violet-soft:#e7e1f4;
+  --mono:ui-monospace,'SF Mono','Cascadia Code','Consolas',monospace;
+  --sans:system-ui,-apple-system,'PingFang SC','Noto Sans SC','Microsoft YaHei','Segoe UI',sans-serif;
+  --reading:min(68ch,100%);
+}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+  --ground:#12141a;--surface:#1a1d24;--surface-dim:#22262e;
+  --ink:#e5e8ec;--ink-2:#b0b6be;--ink-3:#848b95;--ink-4:#575e68;
+  --rule:#2e333c;--rule-light:#262a32;
+  --copper:#e08a4e;--copper-soft:#33220f;--copper-wash:rgba(224,138,78,.075);
+  --blue:#6ba8d0;--blue-soft:#1a2b38;--blue-wash:rgba(107,168,208,.075);
+  --green:#45c495;--green-soft:#10281f;
+  --amber:#dfae4e;--amber-soft:#2b2210;
+  --red:#e8756e;--red-soft:#2e1614;
+  --violet:#a691e0;--violet-soft:#1f1934;
+}}
+:root[data-theme="dark"]{
+  --ground:#12141a;--surface:#1a1d24;--surface-dim:#22262e;
+  --ink:#e5e8ec;--ink-2:#b0b6be;--ink-3:#848b95;--ink-4:#575e68;
+  --rule:#2e333c;--rule-light:#262a32;
+  --copper:#e08a4e;--copper-soft:#33220f;--copper-wash:rgba(224,138,78,.075);
+  --blue:#6ba8d0;--blue-soft:#1a2b38;--blue-wash:rgba(107,168,208,.075);
+  --green:#45c495;--green-soft:#10281f;
+  --amber:#dfae4e;--amber-soft:#2b2210;
+  --red:#e8756e;--red-soft:#2e1614;
+  --violet:#a691e0;--violet-soft:#1f1934;
+}
+:root[data-theme="light"]{
+  --ground:#f4f5f7;--surface:#fff;--surface-dim:#e9ebef;
+  --ink:#15181c;--ink-2:#444a52;--ink-3:#737a84;--ink-4:#a8aeb7;
+  --rule:#d9dce1;--rule-light:#e6e9ed;
+  --copper:#b0521c;--copper-soft:#f6e6da;--copper-wash:rgba(176,82,28,.055);
+  --blue:#2d6389;--blue-soft:#dce8f0;--blue-wash:rgba(45,99,137,.055);
+  --green:#0d7a53;--green-soft:#d4eee3;
+  --amber:#91650b;--amber-soft:#f7ecd3;
+  --red:#ad2f2a;--red-soft:#fadedd;
+  --violet:#63479f;--violet-soft:#e7e1f4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:0 auto;padding:0 24px}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-dim);padding:2px 6px;border-radius:4px;word-break:break-word}
+strong{font-weight:650}
+p{max-width:var(--reading);margin-bottom:16px}
+h3{font-size:19px;font-weight:700;margin:36px 0 12px;letter-spacing:-.01em}
+a{color:var(--copper);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--copper) 35%,transparent)}
+a:hover{border-bottom-color:var(--copper)}
+a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+ul{max-width:var(--reading);margin-bottom:16px;padding-left:24px}
+ul li{margin-bottom:8px}
+
+/* ---------- hero ---------- */
+.hero{padding:72px 0 40px;border-bottom:1px solid var(--rule)}
+.hero-ey{font-family:var(--mono);font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--copper);margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hero-ey::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--copper);flex:none}
+.hero h1{font-size:clamp(30px,4.6vw,46px);font-weight:800;line-height:1.14;letter-spacing:-.025em;margin-bottom:18px;text-wrap:balance}
+.hero h1 em{font-style:normal;color:var(--copper)}
+.hero-sub{font-size:17px;color:var(--ink-2);max-width:62ch;line-height:1.7}
+.hero-sub b{color:var(--ink);font-weight:600}
+
+/* ---------- table of contents ---------- */
+.toc{margin:36px 0 0;border-top:1px solid var(--rule);padding-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:22px}
+.toc-col .tl{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--copper);margin-bottom:9px}
+.toc-col ol{list-style:none;display:flex;flex-direction:column;gap:5px;padding:0;margin:0}
+.toc-col li{font-size:14px;color:var(--ink-2);display:flex;gap:9px;align-items:baseline}
+.toc-col li .n{font-family:var(--mono);font-size:12px;color:var(--ink-4);flex:none;min-width:1.4em}
+.toc-col a{border-bottom:none;color:var(--ink-2)}
+.toc-col a:hover{color:var(--copper)}
+
+/* ---------- part divider ---------- */
+.part{margin:76px 0 0;padding:26px 0 0;border-top:2px solid var(--ink)}
+.part-n{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin-bottom:8px}
+.part h2{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.25;margin-bottom:10px;text-wrap:balance}
+.part p{color:var(--ink-2);font-size:16px}
+
+/* ---------- sections ---------- */
+.section{padding:56px 0 0;scroll-margin-top:20px}
+.sec-lab{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--copper);margin-bottom:8px}
+.sec-t{font-size:26px;font-weight:700;letter-spacing:-.015em;margin-bottom:8px;line-height:1.3;text-wrap:balance}
+.sec-l{font-size:16px;color:var(--ink-2);max-width:var(--reading);margin-bottom:28px;line-height:1.75}
+.sec-lead{font-size:16px;color:var(--ink-2);max-width:var(--reading);margin-bottom:28px;line-height:1.75}
+
+/* ---------- shared blocks (inherited by ch1-3 markup) ---------- */
+.dia{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:28px 24px;margin:24px 0 32px;overflow-x:auto}
+.dia-cap{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center;letter-spacing:.02em;line-height:1.6}
+.cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:24px 0 32px}
+.cc{background:var(--surface);padding:20px}
+.cc .lb{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.cc .vl{font-family:var(--mono);font-size:28px;font-weight:700;line-height:1.2;margin-bottom:4px}
+.cc .dt{font-size:13px;color:var(--ink-3);line-height:1.55}
+.flow{display:flex;flex-direction:column;gap:0;align-items:center;margin:24px 0 32px}
+.fn-node{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:14px 20px;width:min(100%,560px)}
+.fn-node.hi{border-color:var(--blue);background:var(--blue-wash)}
+.fn-node .ft{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--blue)}
+.fn-node .fd{font-size:14px;color:var(--ink-2);margin-top:3px;line-height:1.6}
+.fa{width:2px;height:24px;background:var(--blue);position:relative}
+.fa::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid var(--blue)}
+.sd{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:start;margin:24px 0 32px}
+@media(max-width:640px){.sd{grid-template-columns:1fr}.sc{display:none}}
+.sb{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:16px}
+.sb.ab{border-color:var(--blue);border-style:dashed}
+.sb .st{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--blue);margin-bottom:6px}
+.sb .sm{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);padding:3px 0;border-top:1px solid var(--rule-light)}
+.sb .sm:first-of-type{border-top:none}
+.sc{display:flex;align-items:center;padding-top:32px;color:var(--ink-4);font-size:20px}
+.is{display:flex;flex-direction:column;gap:8px}
+.ic{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:8px 12px;font-family:var(--mono);font-size:12.5px;display:flex;align-items:center;gap:8px}
+.ic .d{width:8px;height:8px;border-radius:50%;flex:none}
+.tw{overflow-x:auto;margin:24px 0 32px;border:1px solid var(--rule);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--surface)}
+th{text-align:left;font-family:var(--mono);font-weight:650;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);padding:12px 16px;border-bottom:1px solid var(--rule);background:var(--surface-dim);white-space:nowrap}
+td{padding:10px 16px;border-bottom:1px solid var(--rule-light);vertical-align:top;line-height:1.65}
+tr:last-child td{border-bottom:none}
+td code{font-size:12px;padding:1px 5px}
+.mc{margin:24px 0 32px}
+.mr{display:grid;grid-template-columns:80px 1fr 60px;gap:12px;align-items:center;margin-bottom:10px}
+.ml{font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap}
+.mt{height:28px;background:var(--surface-dim);border-radius:4px;overflow:hidden}
+.mf{height:100%;border-radius:4px}
+.mv{font-family:var(--mono);font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.co{border-left:3px solid var(--blue);background:var(--blue-wash);padding:16px 20px;border-radius:0 8px 8px 0;margin:24px 0 28px;font-size:15px;color:var(--ink-2);max-width:var(--reading);line-height:1.7}
+.co.am{border-left-color:var(--amber);background:var(--amber-soft)}
+.co.cu{border-left-color:var(--copper);background:var(--copper-wash)}
+.co.rd{border-left-color:var(--red);background:var(--red-soft)}
+.co.gn{border-left-color:var(--green);background:var(--green-soft)}
+.co strong{color:var(--ink)}
+.cb{background:var(--surface-dim);border:1px solid var(--rule);border-radius:8px;padding:16px 20px;font-family:var(--mono);font-size:13px;line-height:1.65;overflow-x:auto;margin:16px 0 24px;max-width:100%;white-space:pre;color:var(--ink-2)}
+.cb .kw{color:var(--violet);font-weight:600}
+.cb .fn{color:var(--blue)}
+.cb .cm{color:var(--ink-4);font-style:italic}
+.cb .ty{color:var(--amber)}
+.cb .st{color:var(--green)}
+.cb .bad{color:var(--red);font-weight:600}
+.cb .add{color:var(--green);font-weight:600}
+canvas.qv{display:block;margin:0 auto;max-width:100%;border-radius:6px}
+.pm{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:24px 0 8px}
+.pm-node{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:10px 12px;font-size:13px;font-weight:600;flex:1 1 116px;min-width:116px;text-align:center}
+.pm-node small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;margin-top:4px;line-height:1.5}
+.pm-node.to13{border-color:var(--green)}
+.pm-node.to14{border-color:var(--violet)}
+.pm-arrow{align-self:center;color:var(--ink-4);font-size:16px;flex:0 0 auto}
+.pm-inner{display:flex;gap:4px;justify-content:center;align-items:center;margin-top:8px;flex-wrap:wrap;color:var(--ink-4);font-size:11px}
+.pm-inner span{background:var(--surface-dim);border:1px dashed var(--rule);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:400;color:var(--ink-2)}
+.mr2{display:grid;grid-template-columns:252px 1fr 64px;gap:12px;align-items:center;margin-bottom:8px}
+@media(max-width:640px){.mr2{grid-template-columns:136px 1fr 44px}}
+.mr2 .ml{font-size:12px}
+.stackbar{display:flex;height:36px;border-radius:6px;overflow:hidden;margin:18px 0 10px;border:1px solid var(--rule)}
+.stackbar>div{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden}
+.sb-leg{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--ink-3);margin-bottom:24px}
+.sb-leg span{display:flex;align-items:center;gap:6px}
+.sb-leg .dot{width:10px;height:10px;border-radius:3px;flex:none}
+
+/* ---------- part II: staged pipeline rail ---------- */
+.stages{display:flex;flex-direction:column;margin:24px 0 32px}
+.stg{display:grid;grid-template-columns:34px 1fr;gap:16px}
+.stg-rail{display:flex;flex-direction:column;align-items:center}
+.stg-d{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;font-weight:700;flex:none;border:1.5px solid var(--rule);background:var(--surface);color:var(--ink-3)}
+.stg-d.on{border-color:var(--blue);color:var(--blue);background:var(--blue-wash)}
+.stg-d.wr{border-color:var(--red);color:var(--red);background:var(--red-soft)}
+.stg-l{width:2px;flex:1;background:var(--rule);min-height:14px}
+.stg:last-child .stg-l{display:none}
+.stg-c{padding:3px 0 22px;min-width:0}
+.stg-t{font-family:var(--mono);font-size:14px;font-weight:650;margin-bottom:4px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.stg-t .src{font-size:11.5px;font-weight:400;color:var(--ink-4)}
+.stg-b{font-size:14.5px;color:var(--ink-2);line-height:1.68;max-width:64ch}
+.stg-b b{color:var(--ink);font-weight:600}
+
+/* ---------- part II: two channels ---------- */
+.chan{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0 12px}
+@media(max-width:680px){.chan{grid-template-columns:1fr}}
+.ch-card{background:var(--surface);border:1.5px solid var(--rule);border-radius:10px;padding:18px 20px}
+.ch-card.gov{border-color:var(--blue)}
+.ch-card.exempt{border-color:var(--amber)}
+.ch-h{font-family:var(--mono);font-size:13px;font-weight:700;margin-bottom:3px}
+.ch-card.gov .ch-h{color:var(--blue)}
+.ch-card.exempt .ch-h{color:var(--amber)}
+.ch-s{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);margin-bottom:14px}
+.ch-card ol{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:8px;counter-reset:s}
+.ch-card ol li{counter-increment:s;font-size:13.5px;color:var(--ink-2);line-height:1.6;padding-left:24px;position:relative;max-width:none}
+.ch-card ol li::before{content:counter(s);position:absolute;left:0;top:2px;font-family:var(--mono);font-size:10.5px;font-weight:700;width:16px;height:16px;border-radius:4px;display:flex;align-items:center;justify-content:center;background:var(--surface-dim);color:var(--ink-3)}
+.ch-card.gov ol li::before{background:var(--blue-soft);color:var(--blue)}
+.ch-card.exempt ol li::before{background:var(--amber-soft);color:var(--amber)}
+.ch-cost{font-size:13px;color:var(--ink-3);border-top:1px solid var(--rule-light);padding-top:11px;line-height:1.6}
+.ch-cost b{color:var(--ink-2)}
+
+/* ---------- part II: case study header ---------- */
+.case{padding:56px 0 0;scroll-margin-top:20px}
+.case-hd{display:flex;gap:14px;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap}
+.case-tag{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--red);background:var(--red-soft);border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:5px;padding:4px 10px;flex:none}
+.chip{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:4px 10px;flex:none;white-space:nowrap}
+.chip.fixed{color:var(--green);background:var(--green-soft);border:1px solid color-mix(in srgb,var(--green) 32%,transparent)}
+.chip.open{color:var(--red);background:var(--red-soft);border:1px solid color-mix(in srgb,var(--red) 32%,transparent)}
+.chip.rejected{color:var(--amber);background:var(--amber-soft);border:1px solid color-mix(in srgb,var(--amber) 32%,transparent)}
+.case h3.case-t{font-size:24px;font-weight:750;letter-spacing:-.015em;line-height:1.3;margin:0 0 10px;text-wrap:balance}
+.facts{display:flex;gap:0;flex-wrap:wrap;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);margin:0 0 26px}
+.fact{flex:1 1 150px;padding:14px 20px 14px 0;margin-right:20px;border-right:1px solid var(--rule)}
+.fact:last-child{border-right:none;margin-right:0}
+.fact .fk{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-4);margin-bottom:3px}
+.fact .fv{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.45}
+
+/* ---------- part II: verdict grid ---------- */
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:24px 0 32px}
+.vc{background:var(--surface);padding:20px}
+.vc .vt{font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--red);margin-bottom:8px}
+.vc .vb{font-size:14px;color:var(--ink-2);line-height:1.68}
+.vc .vb b{color:var(--ink);font-weight:600}
+.vc .vs{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);margin-top:10px;padding-top:9px;border-top:1px solid var(--rule-light);line-height:1.55}
+
+/* ---------- series nav ---------- */
+.series{margin:76px 0 0;border-top:2px solid var(--ink);padding-top:26px}
+.series-n{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin-bottom:16px}
+.slist{display:flex;flex-direction:column;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.srow{background:var(--surface);padding:14px 18px;display:grid;grid-template-columns:34px 1fr auto;gap:14px;align-items:baseline}
+.srow.here{background:var(--copper-wash)}
+.srow .si{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--copper)}
+.srow .sn{font-size:14.5px;color:var(--ink);font-weight:600}
+.srow .sd{font-size:13px;color:var(--ink-3);margin-top:2px;line-height:1.55}
+.srow .sp{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);white-space:nowrap}
+@media(max-width:640px){.srow{grid-template-columns:26px 1fr}.srow .sp{grid-column:2;margin-top:4px}}
+
+footer{margin:64px 0 48px;padding-top:20px;border-top:1px solid var(--rule);font-family:var(--mono);font-size:12px;color:var(--ink-4);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+@media(max-width:600px){.wrap{padding:0 16px}.hero{padding:48px 0 30px}.section,.case{padding-top:42px}.cg{grid-template-columns:1fr 1fr}.mr{grid-template-columns:56px 1fr 48px}.fact{flex-basis:44%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="hero-ey">vLLM 源码学习 · model_loader · 系列第 2b 篇</div>
+  <h1>第二次跑管道：<br><em>layerwise reload</em> 的五阶段与三起事故</h1>
+  <p class="hero-sub">RL 训练每一步都要把新权重灌进正在服务的引擎。新权重是 checkpoint 格式，引擎显存里躺的是 kernel 格式——所以必须把 PWAL 管道<b>再跑一遍</b>。<code>reload/layerwise.py</code> 的做法是数着元素：<b>一层收齐就立刻处理一层</b>，处理完把结果拷回旧地址。<br><br>区别只有一个：这次已经有人握着旧张量的地址了（CUDA Graph）。就是这一个区别，制造了三起事故。本文先讲五阶段和两条通道的编排机制，再用三个真实案例展示它的缺陷——<b>只保地址，不保语义</b>。</p>
+</header>
+
+<section class="part">
+  <div class="part-n">第二部分</div>
+  <h2>第二次跑：同一条管道，换一个时刻</h2>
+  <p>RL 训练每一步都要把新权重灌进正在服务的引擎。新权重是 checkpoint 格式，引擎显存里躺的是 kernel 格式——所以必须把第一部分那条管道<strong>再跑一遍</strong>。区别只有一个：这次已经有人握着旧张量的地址了（CUDA graph）。就是这一个区别，制造了三起事故。</p>
+</section>
+
+<section class="section" id="ch4">
+  <div class="sec-lab">第四章</div>
+  <h2 class="sec-t">layerwise reload 的五阶段与两条通道</h2>
+  <p class="sec-l">为什么不能「收齐全部权重再统一跑一遍 pwal」？因为那样显存里要同时装下旧的 kernel 权重和全部层的新 checkpoint 权重。<code>reload/layerwise.py</code> 的做法是数着元素：<strong>一层收齐就立刻处理一层</strong>，处理完把结果拷回旧地址。</p>
+
+  <div class="stages">
+    <div class="stg">
+      <div class="stg-rail"><div class="stg-d on">1</div><div class="stg-l"></div></div>
+      <div class="stg-c">
+        <div class="stg-t">record_metadata_for_reloading<span class="src">layerwise.py:72</span></div>
+        <div class="stg-b">启动时拍一次快照：把每层张量的 shape / dtype / stride 记成 meta 张量存进 <code>info.restore_metadata</code>。<b>只记结构蓝图，不留数据</b>——后面要靠它把层「退回模型格式」。</div>
+      </div>
+    </div>
+    <div class="stg">
+      <div class="stg-rail"><div class="stg-d on">2</div><div class="stg-l"></div></div>
+      <div class="stg-c">
+        <div class="stg-t">initialize_layerwise_reload<span class="src">layerwise.py:86</span></div>
+        <div class="stg-b">函数自己的 docstring 把职责说得很清楚——<b>三件事进、四件事出</b>：进去时 ① 存下当前 kernel 张量供之后拷回 ② 用 metadata 把参数/buffer 恢复到 meta 设备 ③ 包装 weight loader 以推迟处理；等某层权重收齐后，被包装的 loader 会 ① 把该层物化到目标设备 ② 加载全部缓存的权重 ③ 有量化就跑量化处理 ④ 把结果拷回原张量存储。</div>
+      </div>
+    </div>
+    <div class="stg">
+      <div class="stg-rail"><div class="stg-d on">3</div><div class="stg-l"></div></div>
+      <div class="stg-c">
+        <div class="stg-t">load_weights(...) · 包装器记账<span class="src">layerwise.py:171</span></div>
+        <div class="stg-b">新权重逐个到达。包装器不立刻写入，而是把加载参数缓存进 <code>info.loaded_weights</code>，并把元素数累进 <code>load_numel</code>。到齐的判据是 <code>load_numel == load_numel_total</code>。</div>
+      </div>
+    </div>
+    <div class="stg">
+      <div class="stg-rail"><div class="stg-d wr">4</div><div class="stg-l"></div></div>
+      <div class="stg-c">
+        <div class="stg-t">_layerwise_process · 物化 → 重放 → pwal → 拷回<span class="src">layerwise.py:385</span></div>
+        <div class="stg-b">该层收齐即触发：把 meta 张量物化成真实显存 → 重放缓存的加载写入新值 → <b>跑第一部分那条 pwal 管道</b> → 最后 <code>_copy_and_restore_kernel_tensors</code>（:445）把结果拷进 <code>kernel_tensors</code> 的旧存储，再 <code>_place_kernel_tensors</code>（:464）把旧张量对象放回层上。<b>三起事故全部发生在这最后两行。</b></div>
+      </div>
+    </div>
+    <div class="stg">
+      <div class="stg-rail"><div class="stg-d on">5</div></div>
+      <div class="stg-c">
+        <div class="stg-t">finalize_layerwise_processing<span class="src">layerwise.py:256</span></div>
+        <div class="stg-b">兜底：处理计数没到 total 的层，以及必须排在 linear 之后的 attention 层（<code>_finalize_attention_layer</code>，:343）。收尾之前有一道完整性闸门——见第五章。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cb"><span class="cm"># layerwise.py:86 — 每层进入 reload 的四个动作，顺序不能换</span>
+<span class="kw">for</span> layer <span class="kw">in</span> model.modules():
+    info = <span class="fn">get_layerwise_info</span>(layer)
+    <span class="kw">if</span> info.<span class="fn">can_load</span>():
+        <span class="kw">continue</span>                              <span class="cm"># 这层已经初始化过了</span>
+
+    <span class="cm"># ① 存下当前（kernel 格式的）活张量，留着最后拷回去</span>
+    info.kernel_tensors = <span class="fn">get_layer_params_buffers</span>(layer)
+    <span class="fn">_preserve_runtime_parameter_attrs</span>(layer, info)
+    <span class="cm"># 现在就快照：restore_layer_on_meta 会把 alias buffer 从 live set 里摘掉</span>
+    info.kernel_non_persistent_buffers = <span class="fn">set</span>(layer._non_persistent_buffers_set)
+
+    <span class="cm"># ② 用启动时录的 metadata 把整层恢复成模型格式，放到 meta 设备</span>
+    <span class="fn">restore_layer_on_meta</span>(layer, info)             <span class="cm"># :118</span>
+
+    <span class="cm"># ③ 给所有 loader 套上包装器，把写入推迟</span>
+    <span class="fn">initialize_online_processing</span>(layer)</div>
+
+  <div class="co am"><strong>① 和 ② 的顺序是硬的。</strong><code>restore_layer_on_meta</code> 会改动 <code>layer._non_persistent_buffers_set</code>（把 alias buffer 摘出去），所以 <code>kernel_non_persistent_buffers</code> 必须<strong>在它之前</strong>快照——否则第二部分事故 A 那条 persistence 守卫就拿到一个已经被改过的集合。这也是为什么这个字段要存在 <code>LayerReloadingInfo</code> 上、而不是每次现读。</div>
+
+  <h3>4.1 计数：用 metadata 判断「这层到齐了没有」</h3>
+  <p>整套机制的触发条件不是「收到了哪些名字」，而是<strong>数元素个数</strong>。包装器每次被调用都做同一套记账（<code>make_online_process_loader</code>，<code>:171</code>）：</p>
+
+  <div class="cb"><span class="cm"># 每次 loader 被调用都重算 total —— 因为层可能晚注册参数（比如 bias）</span>
+info.load_numel_total      = <span class="fn">get_layer_size</span>(layer)              <span class="cm"># 该层应收多少</span>
+info.session_expected_numel = <span class="fn">get_required_layer_size</span>(layer)
+<span class="fn">_wrap_parameters_weight_loader</span>(layer)                            <span class="cm"># 顺手包装晚到的参数</span>
+
+<span class="cm"># 绑定并规范化这次加载的实参</span>
+bound_args = loader_signature.<span class="fn">bind</span>(*args, **kwargs)          <span class="cm"># :205</span>
+bound_args.<span class="fn">apply_defaults</span>()
+
+<span class="cm"># 缓存这次加载（推迟写入），并累加进度</span>
+info.loaded_weights.<span class="fn">append</span>((param_name, bound_args))          <span class="cm"># :209</span>
+num_loaded, ret = <span class="fn">get_numel_loaded</span>(original_loader, bound_args) <span class="cm"># :211</span>
+info.load_numel += num_loaded                                    <span class="cm"># :212</span>
+info.session_complete = info.session_loaded_numel >= info.session_expected_numel</div>
+
+  <p>这段就是第二部分事故 B 里那道<strong>防线 ①</strong>的实体：<code>load_numel_total</code> <strong>不是算一次就定下来的</strong>，而是每次 loader 被调用都重算，并顺手包装那些「层在 <code>__init__</code> 后期才注册」的参数。源码注释原话是 “layers may register parameters later (e.g., <code>bias</code>)”。</p>
+
+  <div class="co rd"><strong>但这套计数有一个已知的软肋，注释里自己写了。</strong>有些 qconfig 会把<strong>同一个权重加载多次</strong>——例如 CT_WNA16 为 qkv 的每个分片各加载一次 <code>weight_shape</code>。于是 <code>load_numel</code> 会冲过 <code>load_numel_total</code>，在层已经处理完之后还继续收到加载调用。现状的兜底是 <code>if not info.can_load(): return</code> + 一条 debug 日志（“Excessive loading”），并依赖一个前提：<strong>不可能在没加载完必要权重的情况下先达到 <code>load_numel_total</code></strong>。<code>weight_shape</code> 很小，所以目前安全——但这是个约定，不是保证。</div>
+
+  <div class="co"><strong>为什么必须「拷回」而不是「换掉」：</strong>CUDA graph 捕获时记录的是张量地址。换对象 = 图重放时访问野指针。所以 reload 的定稿动作被硬性限制成 <code>copy_()</code> 到<em>同一块</em>存储——这正是第三章 <code>prefer_copy</code> 那个时间轴的另一半。</div>
+
+  <h3>4.2 两条通道：管辖 vs 豁免</h3>
+  <p>并非所有张量都进这套记账机制。<code>reload/meta.py:25</code> 有一份按名字精确匹配的豁免名单 <code>SKIP_TENSORS</code>，名单里的张量完全退出管道。先定义<strong>活张量</strong>：层上当前注册着的那一个——forward 读它，CUDA graph 捕获的也是它的地址。</p>
+
+  <div class="chan">
+    <div class="ch-card gov">
+      <div class="ch-h">管辖通道 · 先暂存，后结算</div>
+      <div class="ch-s">名单外的全部张量：weight、scale …</div>
+      <ol>
+        <li>张量到达 → 包装器接管：元素数计入 <code>load_numel</code>，加载参数缓存进 <code>loaded_weights</code>。<b>真正的写入被推迟。</b></li>
+        <li>该层收齐 → 物化新张量 → 重放缓存的加载 → 跑 pwal（量化 / permute / repack）。</li>
+        <li><code>copy_()</code> 把加工结果拷回活张量的旧地址。</li>
+      </ol>
+      <div class="ch-cost"><b>换来两件事：</b>值在进入 runtime 之前有一次被加工的机会；引擎全程记账，知道谁来了、谁没来。</div>
+    </div>
+    <div class="ch-card exempt">
+      <div class="ch-h">豁免通道 · 一步到位</div>
+      <div class="ch-s">SKIP_TENSORS 名单内：_expert_map、e_score_correction_bias …</div>
+      <ol>
+        <li>loader 从不被包装。张量到达的那一刻，原始 <code>weight_loader</code> 立即执行 <code>param.copy_(loaded)</code>——源头是传输流，目的地就是活张量本身。</li>
+        <li>没有第 2、3 步：<b>不计数、不缓存、不重放、不拷回</b>。</li>
+      </ol>
+      <div class="ch-cost"><b>代价是两件事永远做不了：</b>① 到齐核查——漏发只能静默；② 加载后加工——如果某个 kernel 要求换布局，豁免通道给不了。<b>事故 B 就是撞在第 ② 条上。</b></div>
+    </div>
+  </div>
+
+  <div class="co am"><strong>名单里现在有什么（2026-07 main）：</strong><code>_expert_map</code>、<code>expert_mask</code>、<code>expert_global_to_physical</code>、<code>expert_physical_to_global</code>、<code>expert_local_to_global</code>、<code>e_score_correction_bias</code>——清一色是<strong>从不经过 weight loader 的 MoE 路由表</strong>。它们本来就不参与「加载」，所以豁免无害。这条共性是判断「什么该进名单」的唯一标准。</div>
+</section>
+
+<section class="case" id="caseA">
+  <div class="case-hd">
+    <span class="case-tag">事故 A</span>
+    <span class="chip fixed">已修复 · PR #44371</span>
+  </div>
+  <h3 class="case-t">未加载的 buffer 被垃圾覆盖：Gemma4 路由器全错</h3>
+  <div class="facts">
+    <div class="fact"><div class="fk">模型</div><div class="fv">Gemma4 26B-A4B</div></div>
+    <div class="fact"><div class="fk">损坏的值</div><div class="fv">root_size<br>0.0188 → 1.0</div></div>
+    <div class="fact"><div class="fk">症状</div><div class="fv">KL 0.01 → 1.5236</div></div>
+    <div class="fact"><div class="fk">告警</div><div class="fv">无</div></div>
+  </div>
+
+  <p><code>Gemma4Router.root_size</code> 是 <code>hidden_size ** -0.5</code>——和 attention 的 <code>1/√d_k</code> 同一个作用，用来压住 router logits 的幅度。它是个<strong>派生常量</strong>：值完全由 config 决定，训练不改它，checkpoint 里也没有它。所以 vLLM 用 <code>register_buffer(..., persistent=False)</code> 注册它——是张量（能跟着 module 上 GPU、对 <code>torch.compile</code> 友好），但不进 state_dict、<strong>永远不会被 weight loader 加载</strong>。</p>
+
+  <p>正常加载下这一切成立。但 reload 不走 <code>__init__</code>，它走第四章那五步：整层退回 meta → 物化 → 重放 loader。于是 <code>weight</code> 和 <code>root_size</code> 在第 4 步分道扬镳：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>阶段</th><th>weight（Parameter，会被加载）</th><th>root_size（non-persistent buffer，不被加载）</th></tr></thead>
+      <tbody>
+        <tr><td>阶段 2 · 存进 kernel_tensors</td><td>正确值已保存</td><td><code>0.018798828125</code> 已保存</td></tr>
+        <tr><td>阶段 2 · 退回 meta</td><td>meta，无数据</td><td>meta，无数据</td></tr>
+        <tr><td>阶段 4a · 物化</td><td>未初始化显存</td><td>未初始化显存</td></tr>
+        <tr style="background:var(--red-soft)"><td>阶段 4b · 重放 loader</td><td><strong style="color:var(--green)">写入新值 ✓</strong></td><td><strong style="color:var(--red)">没人写它——仍是垃圾</strong></td></tr>
+        <tr style="background:var(--red-soft)"><td>阶段 4c · 拷回旧地址</td><td>新值 → 正确 ✓</td><td><strong style="color:var(--red)">垃圾覆盖了保存好的 0.0188 ✗</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>分歧点在 <strong>4b → 4c</strong>：拷回那一步<strong>不区分</strong>「这个张量本轮真的收到了新数据」和「这个张量从来不该被加载」，对所有 buffer 一律 <code>copy_()</code>。第二个问题跟在后面——<code>_place_kernel_tensors</code> 重新注册 buffer 时用的是 <code>register_buffer(name, buffer)</code>，<code>persistent</code> 默认 True，<strong>原来的 False 丢了</strong>，这个 buffer 从此开始出现在 <code>state_dict()</code> 里。</p>
+
+  <div class="cb"><span class="cm"># 修复后 —— layerwise.py:445 当前 main</span>
+loaded_tensor_names = {name <span class="kw">for</span> name, _ <span class="kw">in</span> info.loaded_weights}
+<span class="kw">for</span> name, buffer <span class="kw">in</span> buffers.items():
+    <span class="kw">if</span> name <span class="kw">not in</span> layer._buffers:
+        <span class="kw">continue</span>
+    <span class="add">    <span class="kw">if</span> name <span class="kw">in</span> non_persistent <span class="kw">and</span> name <span class="kw">not in</span> loaded_tensor_names:</span>
+    <span class="add">        <span class="kw">continue</span></span>  <span class="cm"># non-persistent 且本轮未加载 → 保留 kernel 旧值</span>
+    buffer.data.<span class="fn">copy_</span>(getattr(layer, name))
+
+<span class="cm"># 并且 _place_kernel_tensors（:464）现在带上了 persistence：</span>
+layer.<span class="fn">register_buffer</span>(name, buffer, persistent=name <span class="kw">not in</span> non_persistent)</div>
+
+  <div class="co gn"><strong>已落地。</strong>持久性靠 <code>LayerReloadingInfo.kernel_non_persistent_buffers</code> 这个字段带过 reload 全程——因为 <code>_non_persistent_buffers_set</code> 本身在 reload 期间会被改写，不能作为可信来源。</div>
+</section>
+
+<section class="case" id="caseB">
+  <div class="case-hd">
+    <span class="case-tag">事故 B</span>
+    <span class="chip rejected">未采纳 · PR #49586</span>
+  </div>
+  <h3 class="case-t">bias 想走豁免通道：H100 上无害，A100 上致命</h3>
+  <div class="facts">
+    <div class="fact"><div class="fk">提议</div><div class="fv">SKIP_TENSORS.add("bias")</div></div>
+    <div class="fact"><div class="fk">想修的症状</div><div class="fv">reload 漏发 bias<br>→ 垃圾值</div></div>
+    <div class="fact"><div class="fk">代价</div><div class="fv">Marlin 路径 reload<br>静默错误 / 崩溃</div></div>
+    <div class="fact"><div class="fk">当前名单</div><div class="fv">不含 bias</div></div>
+  </div>
+
+  <p>症状是真的，但归因错了。PR 认为首次加载就会腐蚀 bias（<code>load_numel_total</code> 只算了 weight → weight 一到就提前触发 → 物化覆盖已加载的 bias）。逐行核代码，这条路上有<strong>两道现成的防线</strong>：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>PR 描述的机制</th><th>代码里的实际情况</th></tr></thead>
+      <tbody>
+        <tr><td>total 只算 weight，weight 一到齐就提前触发</td><td><strong>防线 ①</strong>：包装器每次被调用都先<em>重算</em> total 并补充包装晚注册的参数（<code>layerwise.py:176-181</code>，注释原话 “layers may register parameters later (e.g., bias)”）。weight 到齐时 total 已含 bias</td></tr>
+        <tr><td>materialize 把所有非 skip 张量重新分配，覆盖已加载的 bias</td><td><strong>防线 ②</strong>：<code>materialize_layer</code>（<code>meta.py:137</code>）只重新分配 <code>is_meta</code> 的张量。首载时 bias 是真实张量，一根手指都不碰</td></tr>
+        <tr style="background:var(--amber-soft)"><td>症状：bias 变成未初始化内存 / 全零</td><td>症状真实，但唯一可复现的路径是 <strong>reload 时传输流漏发 bias</strong>：计数永远到不了 total → 由 finalize 兜底 → bias 还是 meta → 物化成未初始化显存 → 没人重放 → 照样拷回</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>把 bias 加进豁免名单确实让症状消失（垃圾值 → 保留旧值）。但它引入了一个更坏的问题，因为它假定了「<strong>bias 只被加载，从不被加工</strong>」。CUTLASS 路径确实如此；<strong>Marlin 不是</strong>——<code>prepare_fp8_layer_for_marlin</code> 在量化阶段对 bias 做两步加工：</p>
+
+  <ul>
+    <li><strong>pad</strong>：末维补零，从 <code>part_size_n</code> 填到 tile 对齐的 <code>padded_n</code>（改形状）</li>
+    <li><strong>permute</strong>：按 32 个输出通道一组 reshape，用固定下标表 <code>scale_perm_single</code>（<code>[0,1,8,9,16,17,24,25, 2,3,10,11,…]</code>）交错重排。和 per-channel scale <strong>共用同一张表</strong>——因为 Marlin epilogue 按线程 fragment 的列布局逐通道加 bias，要求 bias 与 scale 的通道顺序一致</li>
+  </ul>
+
+  <p>所以 Marlin 层的活 bias 不是 checkpoint 布局，而是<strong>重排过的 kernel 布局</strong>。豁免通道把 raw 值直接怼进去，kernel 就把第 <em>i</em> 个 bias 加到错误的输出通道上。而这在 A100 上不是小众场景：SM80 没有原生 FP8，online FP8 自动 fallback 到 MarlinFP8——<strong>恰好就是这个 PR 想修的功能</strong>。</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>场景</th><th>修改前</th><th>加入 SKIP_TENSORS 后</th></tr></thead>
+      <tbody>
+        <tr><td>首次加载（CUTLASS，H100/SM89+）</td><td>✓ 正确</td><td>✓ 正确</td></tr>
+        <tr><td>reload，weight+bias 全发送（CUTLASS）</td><td>✓ 正确</td><td>✓ 正确，指针天然稳定</td></tr>
+        <tr><td>reload，漏发 bias</td><td>✗ 垃圾值</td><td>△ 保留旧值——症状消失，但 bias 静默陈旧。RL 里 bias 是被训练的参数，旧 bias = 错的 policy，且无任何告警</td></tr>
+        <tr style="background:var(--red-soft)"><td>reload，Marlin 路径（A100 online FP8 / MXFP8 / FP4 / GPTQ / AWQ）</td><td>✓ 正确</td><td><strong style="color:var(--red)">✗ 新引入的 bug</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>修改前每轮 reload 都把 bias「洗回原始布局，再重排一次」，permute 恰好做一次，所以永远对。剪断这个闭环之后有三种结局，<strong>取决于权重到达顺序</strong>：</p>
+
+  <div class="flow">
+    <div class="fn-node" style="border-color:var(--red)"><div class="ft" style="color:var(--red)">情形一 · bias 晚于 weight 到达</div><div class="fd">weight 收齐触发 pwal 重跑，此刻它拿到的 <code>layer.bias</code> 是上一轮已 permute 过的值 → <strong>再 permute 一次</strong>。随后新 bias 以 raw 布局直接 copy 进活张量 → kernel 按 permuted 语义读一块 raw 数据。静默输出错误。</div></div>
+    <div class="fa" style="background:var(--red)"></div>
+    <div class="fn-node" style="border-color:var(--red)"><div class="ft" style="color:var(--red)">情形二 · size_n 非 tile 对齐</div><div class="fd">活 bias 始终是 <code>(padded_n,)</code>，checkpoint 的 bias 是 <code>(part_size_n,)</code> → loader 的 <code>copy_</code> 形状不匹配，或 pwal 里的 shape assert 直接失败。<strong>崩溃</strong>。</div></div>
+    <div class="fa" style="background:var(--red)"></div>
+    <div class="fn-node" style="border-color:var(--amber)"><div class="ft" style="color:var(--amber)">情形三 · bias 恰好先到、且无 padding</div><div class="fd">raw 值先写入，pwal 随后 permute 的正好是新值 → <strong>侥幸正确</strong>。正确与否取决于到达顺序——最难排查的一类 bug。</div></div>
+  </div>
+
+  <div class="co am"><strong>结论：</strong>这个改动用「按名字全局豁免」去修一个「计数 / 收尾时序」问题。它掩盖了症状（垃圾 → 静默陈旧），却踩坏了 Marlin 现成的正确行为。净效果：H100 无害，A100 把原本正确的 reload 变成顺序依赖的静默错误或崩溃。<br><br><strong>正确的修法在收尾，不在名单</strong>——见第五章。事实上当前 main 的 <code>SKIP_TENSORS</code> 不含 bias，落地的是收尾闸门。</div>
+</section>
+
+<section class="case" id="caseC">
+  <div class="case-hd">
+    <span class="case-tag">事故 C</span>
+    <span class="chip open">仍未设防</span>
+  </div>
+  <h3 class="case-t">搬了字节，没搬元数据：FP8 block × DeepGEMM</h3>
+  <div class="facts">
+    <div class="fact"><div class="fk">触发条件</div><div class="fv">FP8 block 量化<br>× DeepGEMM</div></div>
+    <div class="fact"><div class="fk">GLM-5.2 744B</div><div class="fv">resp_len → 2<br>纯乱码</div></div>
+    <div class="fact"><div class="fk">Moonlight-16B</div><div class="fv">logprob_diff 1.7<br>静默失败</div></div>
+    <div class="fact"><div class="fk">环境</div><div class="fv">GB300 · vLLM 0.24</div></div>
+  </div>
+
+  <p>FP8 block 量化下 <code>weight_scale_inv</code> 是个 2D 张量（每 128×128 权重一个 scale）。DeepGEMM 会在定稿阶段把它转成<strong>专有布局</strong>——shape 和 dtype 都变。于是 reload 的拷回阶段遇到一个第一部分从未出现的情况：<strong>新张量和旧容器的元数据不一致</strong>。</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>kv_b_proj.weight_scale_inv</th><th>Point A · 初始加载后</th><th>Point B · 训练端发来的</th><th>Point C · reload 后</th></tr></thead>
+      <tbody>
+        <tr><td>dtype</td><td>int32 <span style="color:var(--ink-4)">*</span></td><td><span style="color:var(--green)">float32</span></td><td><strong style="color:var(--red)">int32</strong></td></tr>
+        <tr><td>shape</td><td>[3584, 1] <span style="color:var(--ink-4)">*</span></td><td><span style="color:var(--green)">[224, 4]</span></td><td><strong style="color:var(--red)">[3584, 1]</strong></td></tr>
+        <tr><td>值（absmax）</td><td>0.0 <span style="color:var(--ink-4)">*</span></td><td><span style="color:var(--green)">0.000488</span></td><td><strong style="color:var(--red)">1,937,011,584</strong></td></tr>
+        <tr><td>推理</td><td><span style="color:var(--green)">正常</span></td><td>—</td><td><strong style="color:var(--red)">乱码</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:13px;color:var(--ink-3);margin-top:-18px"><span style="color:var(--ink-4)">*</span> Point A 显示 int32 / 全零是正常的：DeepGEMM 把 scale 吸收进了 kernel 编译内存，<code>named_parameters()</code> 返回的只是清零占位符。</p>
+
+  <p>Point C 那个 <code>1,937,011,584</code> 不是随机数——它正是一个 <code>float32</code> 小数的 IEEE 754 位模式被当作 int32 读出来的结果。也就是说：<strong>字节到了，类型解读错了</strong>。</p>
+
+  <p>原因在拷回那两行的分工。<code>_copy_and_restore_kernel_tensors</code> 只让<em>字节</em>流过 <code>copy_()</code>；紧接着 <code>_place_kernel_tensors</code> 把<strong>旧的 parameter 对象</strong>重新注册回层上——新张量的 dtype / shape / stride 被整体丢弃，<strong>旧容器的元数据说了算</strong>。</p>
+
+  <div class="cb"><span class="cm"># layerwise.py:445 —— 当前 main，parameters 分支至今没有守卫</span>
+<span class="kw">for</span> name, param <span class="kw">in</span> parameters.items():
+    param.data.<span class="fn">copy_</span>(getattr(layer, name))   <span class="bad"># ← 无 dtype / shape 语义校验</span>
+
+<span class="cm"># 随后 _place_kernel_tensors（:464）：</span>
+<span class="kw">for</span> name, param <span class="kw">in</span> parameters.items():
+    layer.<span class="fn">register_parameter</span>(name, param)      <span class="bad"># ← 装回的是"旧容器"，元数据以它为准</span></div>
+
+  <p>下游 MLA attention 拿这个 scale 去反量化 <code>kv_b_proj</code>、算 W_UV / W_UK_T（第一章讲过的那个顺序依赖）——scale 是垃圾，两个矩阵就是垃圾，输出成乱码。</p>
+
+  <div class="co rd"><strong>对比事故 A：</strong>buffers 分支在 PR #44371 之后有了两道守卫（是否本轮加载、persistence 是否保留）；<strong>parameters 分支一道都没有</strong>。Per-tensor FP8 不受影响（scale 是标量，没有不一致的空间）；受影响的是 block 量化 + 有专有布局的 kernel 这个组合。上游已有多个同族报告——<code>#47116</code>（已合并，XPU 上 <code>weight_scale_inv</code> transpose 导致 MLA dequant 损坏）、<code>#45835</code>、<code>#41670</code>、<code>#40822</code>（checkpoint ↔ kernel 格式转换的架构性 RFC）。</div>
+</section>
+
+<section class="section" id="ch5">
+  <div class="sec-lab">第五章</div>
+  <h2 class="sec-t">三起事故，一个缺陷</h2>
+  <p class="sec-l">三个案例的模型、量化格式、硬件全不一样，但落点相同：<strong><code>_copy_and_restore_kernel_tensors</code> 和 <code>_place_kernel_tensors</code></strong>。原因是同一件事——第三章那个精心设计的「装回」家族，在 reload 路径上退化成了一次裸的 <code>.data.copy_()</code>：<strong>只保地址，不保语义</strong>。</p>
+
+  <div class="verdict">
+    <div class="vc">
+      <div class="vt">A · 拷了不该拷的</div>
+      <div class="vb">对本轮<b>从未收到加载</b>的张量照样执行拷回，把物化出来的垃圾写进保存好的正确值上。</div>
+      <div class="vs">丢失的语义：<br>「这个张量本轮到过吗」</div>
+    </div>
+    <div class="vc">
+      <div class="vt">B · 为了不拷而整体豁免</div>
+      <div class="vb">用按名字豁免绕开拷回，顺带丢掉了<b>必须做的加工</b>——Marlin 的 pad + permute。</div>
+      <div class="vs">丢失的语义：<br>「这个张量需要被加工吗」</div>
+    </div>
+    <div class="vc">
+      <div class="vt">C · 拷了但没带元数据</div>
+      <div class="vb">字节流过 <code>copy_</code>，dtype / shape / stride 留在旧容器里，<b>装回的是旧标签</b>。</div>
+      <div class="vs">丢失的语义：<br>「这块字节该按什么解释」</div>
+    </div>
+  </div>
+
+  <p>换个说法：第三章列出的三条保证是<strong>注册可见性、元数据存活、地址稳定</strong>。reload 的拷回路径把第三条抬成了硬约束（CUDA graph 要求），代价是把前两条降级成了「碰巧」。<code>replace_parameter</code> 在首载路径上显式迁移 <code>weight_loader</code>、显式处理删除与新增；在 reload 路径上这些判断没有对应物。</p>
+
+  <h3>5.1 已经落地的：收尾闸门</h3>
+  <p>事故 B 的分析给出的修法是——<strong>问题的根在收尾，不在名单</strong>：一个本轮从未收到加载、也没有可信初值的 meta 张量，不应该被物化成垃圾再拷回 kernel 存储。这条守卫已经在了，而且做成了 fail-closed：</p>
+
+  <div class="cb"><span class="cm"># reload/layerwise.py:320 —— 谁没收齐，列出来</span>
+<span class="kw">def</span> <span class="fn">get_incomplete_layerwise_reload</span>(model) -> list[tuple[str, int, int]]:
+    <span class="cm"># info.session_started and not info.session_complete</span>
+    <span class="cm"># and info.session_expected_numel > 0</span>
+
+<span class="cm"># distributed/weight_transfer/nccl_engine.py:245（ipc_engine.py:235 同款）</span>
+incomplete = <span class="fn">get_incomplete_layerwise_reload</span>(self.model)
+<span class="kw">if</span> incomplete:
+    <span class="kw">raise</span> <span class="ty">RuntimeError</span>(
+        <span class="st">"incomplete weight update; refusing to finalize with "</span>
+        <span class="st">f"{len(incomplete)} unresolved layers (sample={incomplete[:10]})"</span>
+    )</div>
+
+  <p>这条规则的好处正是它<strong>不点名任何张量</strong>：bias、scale、buffer——任何漏发的东西都被同一条守卫拦住，Marlin 的正确行为一行都不用动。事故 A 的 buffer 守卫和这条闸门配合，覆盖了「该来没来」这一整类。</p>
+
+  <h3>5.2 还缺的：拷回时的语义校验</h3>
+  <p>闸门管的是「张量没到」。事故 C 是<strong>张量到了、加工也做了，但结果装不进旧容器</strong>——闸门看不见它，因为 <code>load_numel</code> 数得满满的。这一类还没有守卫。</p>
+
+  <div class="co cu"><strong>缺口的形状很具体：</strong><code>_copy_and_restore_kernel_tensors</code> 的 parameters 分支在 <code>copy_</code> 之前不检查新旧张量的 dtype / shape 是否一致，<code>_place_kernel_tensors</code> 也不检查它正在装回的旧容器是否还能正确解释这块字节。<br><br>同一处该有的判断，其实第三章早就写清楚了：<strong>「首载 rebind、重载 copy」不该是布尔默认值，而该是 <code>replace_parameter</code> 自己能感知 reload 状态 + 做兼容性检测的一个判断。</strong>把这个判断补进 reload 的拷回路径——不兼容就明确失败而不是静默降级——事故 C 这一类就和事故 A 一样被一条规则收掉。届时 <code>prefer_copy</code> 参数本身都可以消失。</div>
+
+  <div class="co gn"><strong>三起事故的当前状态（对照 2026-07 main 核过）：</strong><br>
+  <strong>A</strong> — 已修复：<code>layerwise.py:445</code> 的 buffers 分支有 <code>non_persistent and not loaded</code> 守卫，<code>:464</code> 的 <code>register_buffer</code> 带上了 <code>persistent=</code>。<br>
+  <strong>B</strong> — 未采纳：<code>meta.py:25</code> 的 <code>SKIP_TENSORS</code> 不含 <code>"bias"</code>；落地的是 <code>nccl_engine.py:247</code> / <code>ipc_engine.py:237</code> 的 fail-closed 闸门。<br>
+  <strong>C</strong> — 仍未设防：parameters 分支依旧是一行无校验的 <code>param.data.copy_()</code>。</div>
+</section>
+
+<footer>
+  <span>layerwise reload · 五阶段与三起事故</span>
+  <span>代码引用核对于 <span style="color:var(--copper)">2026-07 main</span></span>
+</footer>
+
+</div>
+</body></html>

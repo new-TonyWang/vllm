@@ -147,6 +147,7 @@ class IPCWeightTransferEngine(
         # Shared across all chunks of every packed transfer this engine
         # receives; see PackedBufferImporter for the refcount contract.
         self._packed_importer = PackedBufferImporter()
+        self._updated_parameter_names: set[str] = set()
 
     def init_transfer_engine(self, init_info: IPCWeightTransferInitInfo) -> None:
         """
@@ -166,6 +167,7 @@ class IPCWeightTransferEngine(
         )
 
         initialize_layerwise_reload(self.model)
+        self._updated_parameter_names.clear()
 
     def finish_weight_update(self) -> None:
         """Finalize layerwise reloading after all weights have been received."""
@@ -173,7 +175,12 @@ class IPCWeightTransferEngine(
             finalize_layerwise_reload,
         )
 
-        finalize_layerwise_reload(self.model, self.model_config)
+        finalize_layerwise_reload(
+            self.model,
+            self.model_config,
+            frozenset(self._updated_parameter_names),
+        )
+        self._updated_parameter_names.clear()
         # Every reduce_tensor call is a fresh export with its own refcount
         # slot, so releasing once per update always balances this update's
         # export and lets the trainer reclaim its staging buffer. Callers
@@ -201,6 +208,7 @@ class IPCWeightTransferEngine(
         # rebuilt on the device the model lives on.
         device_index = self.device.index
 
+        self._updated_parameter_names.update(update_info.names)
         if self.packed:
             if update_info.tensor_sizes is None:
                 raise ValueError("`tensor_sizes` is required when packed=True")

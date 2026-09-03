@@ -693,11 +693,49 @@ class CutlassExpertsFp4(mk.FusedMoEExpertsModular):
     """CUTLASS FP4 fused MoE expert implementation."""
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        # Fuse activation scales into w_scale_2 in-place so that
-        # g1/g2_alphas (which reference the same tensor) stay in sync
-        # when EPLB rearranges the parameter.
-        layer.w13_weight_scale_2.data.mul_(layer.w13_input_scale)
-        layer.w2_weight_scale_2.data.mul_(layer.w2_input_scale)
+        if not hasattr(self, "_base_w13_weight_scale_2"):
+            self._base_w13_weight_scale_2 = layer.w13_weight_scale_2.detach().clone()
+            self._base_w2_weight_scale_2 = layer.w2_weight_scale_2.detach().clone()
+        self._refresh_scales(layer)
+
+    def supports_selective_reload(self) -> bool:
+        return hasattr(self, "_base_w13_weight_scale_2")
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        if updated_parameter_names and not any(
+            name.endswith(
+                (
+                    "w13_input_scale",
+                    "w2_input_scale",
+                    "w13_weight_scale_2",
+                    "w2_weight_scale_2",
+                )
+            )
+            for name in updated_parameter_names
+        ):
+            return
+        if updated_parameter_names and any(
+            name.endswith("w13_weight_scale_2") for name in updated_parameter_names
+        ):
+            self._base_w13_weight_scale_2.copy_(layer.w13_weight_scale_2)
+        if updated_parameter_names and any(
+            name.endswith("w2_weight_scale_2") for name in updated_parameter_names
+        ):
+            self._base_w2_weight_scale_2.copy_(layer.w2_weight_scale_2)
+        self._refresh_scales(layer)
+
+    def _refresh_scales(self, layer: torch.nn.Module) -> None:
+        with torch.no_grad():
+            layer.w13_weight_scale_2.copy_(
+                self._base_w13_weight_scale_2 * layer.w13_input_scale
+            )
+            layer.w2_weight_scale_2.copy_(
+                self._base_w2_weight_scale_2 * layer.w2_input_scale
+            )
 
     @property
     def expects_unquantized_inputs(self) -> bool:

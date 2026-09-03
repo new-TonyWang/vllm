@@ -865,6 +865,12 @@ class AttentionImplBase(ABC, Generic[T]):
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         pass
 
+    def refresh_derived_state(
+        self, updated_parameter_names: frozenset[str] | None = None
+    ) -> None:
+        """Refresh graph-visible derived state in-place after weight reload."""
+        del updated_parameter_names
+
 
 class AttentionImpl(AttentionImplBase[T], Generic[T]):
     """Standard attention implementation with forward method."""

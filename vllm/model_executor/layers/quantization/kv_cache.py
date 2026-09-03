@@ -71,6 +71,31 @@ class BaseKVCacheMethod(QuantizeMethodBase):
     def apply(self, layer: torch.nn.Module) -> torch.Tensor:
         raise RuntimeError(f"{self.__class__.__name__}.apply should not be called.")
 
+    def supports_selective_reload(self) -> bool:
+        """KV cache scales can be recomputed without replacing storage."""
+        return True
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Recompute runtime KV scales from their checkpoint source values.
+
+        The source ``q_scale``/``k_scale``/``v_scale``/``prob_scale`` parameters
+        remain registered so a subsequent reload has a stable destination. The
+        derived device and host mirrors are updated in-place by the common
+        processing routine.
+        """
+        if updated_parameter_names:
+            scale_names = ("q_scale", "k_scale", "v_scale", "prob_scale")
+            if not any(
+                any(name.endswith(suffix) for suffix in scale_names)
+                for name in updated_parameter_names
+            ):
+                return
+        self.process_weights_after_loading(layer)
+
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         # skip if there are no weights to process (for example, weight reloading)
         if not hasattr(layer, "q_scale"):
@@ -86,6 +111,8 @@ class BaseKVCacheMethod(QuantizeMethodBase):
             layer._v_scale.copy_(1.0)
             layer._k_scale_float = 1.0
             layer._v_scale_float = 1.0
+            # These source placeholders are not consumed after dynamic scales
+            # are selected and have no selective refresh dependencies.
             del layer.k_scale
             del layer.v_scale
             del layer.q_scale
@@ -99,8 +126,8 @@ class BaseKVCacheMethod(QuantizeMethodBase):
         if is_quantized_kv_cache(layer.kv_cache_dtype):
             if layer.k_scale > 0.0 and layer.v_scale > 0.0:
                 # We prefer to use separate k_scale and v_scale if present
-                k_scale = layer.k_scale.to("cpu").tolist()
-                v_scale = layer.v_scale.to("cpu").tolist()
+                k_scale = float(layer.k_scale.detach().item())
+                v_scale = float(layer.v_scale.detach().item())
                 if current_platform.is_fp8_fnuz():
                     k_scale *= 2
                     v_scale *= 2
@@ -114,9 +141,12 @@ class BaseKVCacheMethod(QuantizeMethodBase):
                 # kv_scale to k_scale during weight loading, and duplicate
                 # k_scale to v_scale here
                 assert layer.k_scale > 0.0
-                scale_to_duplicate = max(layer.k_scale, layer.v_scale)
-                k_scale = scale_to_duplicate.to("cpu").tolist()
-                v_scale = scale_to_duplicate.to("cpu").tolist()
+                scale_to_duplicate = max(
+                    float(layer.k_scale.detach().item()),
+                    float(layer.v_scale.detach().item()),
+                )
+                k_scale = scale_to_duplicate
+                v_scale = scale_to_duplicate
                 if current_platform.is_fp8_fnuz():
                     k_scale *= 2
                     v_scale *= 2
@@ -151,13 +181,13 @@ class BaseKVCacheMethod(QuantizeMethodBase):
                 )
 
         if layer.q_scale > 0.0:
-            q_scale = layer.q_scale
+            q_scale = float(layer.q_scale.detach().item())
             if current_platform.is_fp8_fnuz():
                 q_scale *= 2
         else:
             q_scale = 1.0
         if layer.prob_scale > 0.0:
-            prob_scale = layer.prob_scale
+            prob_scale = float(layer.prob_scale.detach().item())
             if current_platform.is_fp8_fnuz():
                 prob_scale *= 2
         else:
@@ -189,7 +219,5 @@ class BaseKVCacheMethod(QuantizeMethodBase):
                 "available in the fp8 checkpoint."
             )
 
-        del layer.k_scale
-        del layer.v_scale
-        del layer.q_scale
-        del layer.prob_scale
+        # Keep source parameters registered. Selective reload updates these
+        # tensors in-place and calls ``refresh_derived_state`` afterwards.

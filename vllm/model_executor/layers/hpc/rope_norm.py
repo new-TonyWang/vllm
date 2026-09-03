@@ -239,6 +239,11 @@ class HpcRopeNorm(CustomOp, HpcModule):
             if self.fallback_knorm is not None and self.knorm_weight is not None:
                 self.knorm_weight.data.copy_(self.fallback_knorm.weight.data.float())
 
+    def refresh_derived_state(self, updated_parameter_names=None) -> None:
+        """Refresh QK norm weights in-place after a weight update."""
+        del updated_parameter_names
+        self.process_weights_after_loading()
+
     def register_layer_name(self, layer_name: str) -> None:
         """Register layer_name and add self to the global registry.
 

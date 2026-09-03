@@ -839,11 +839,24 @@ class B12xPagedAttentionImpl(AttentionImpl[B12xPagedMetadata]):
 
     def process_weights_after_loading(self, act_dtype: torch.dtype) -> None:
         del act_dtype
+        self._refresh_sinks()
+
+    def refresh_derived_state(
+        self, updated_parameter_names: frozenset[str] | None = None
+    ) -> None:
+        """Refresh the FP32 attention sinks without replacing their storage."""
+        del updated_parameter_names
+        self._refresh_sinks()
+
+    def _refresh_sinks(self) -> None:
         source_sinks = self._sinks_source
         if source_sinks is None:
             return
         if source_sinks.dtype == torch.float32:
-            self.sinks = source_sinks
+            if self.sinks is None:
+                self.sinks = source_sinks
+            else:
+                self.sinks.copy_(source_sinks)
         elif self.sinks is None or self.sinks.dtype != torch.float32:
             self.sinks = source_sinks.to(torch.float32)
         else:

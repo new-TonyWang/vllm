@@ -5655,7 +5655,11 @@ class GPUModelRunner(
             # load weights from checkpoint/ original model format
             initialize_layerwise_reload(model)
             loaded_weights = model.load_weights(weights_iterator)
-            finalize_layerwise_reload(model, self.model_config)
+            finalize_layerwise_reload(
+                model,
+                self.model_config,
+                frozenset(loaded_weights),
+            )
 
         else:
             # load weights from kernel format

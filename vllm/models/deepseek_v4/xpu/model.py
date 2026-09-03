@@ -1305,6 +1305,10 @@ def _make_deepseek_v4_weights_mapper(expert_dtype: str) -> WeightsMapper:
 
 
 class DeepseekV4ForCausalLM(nn.Module, SupportsPP, SupportsEagle3):
+    def supports_selective_reload(self) -> bool:
+        """XPU Mega-MoE finalization rebuilds derived runtime state."""
+        return False
+
     model_cls = DeepseekV4Model
 
     # Default mapper assumes the original FP4-expert checkpoint layout.

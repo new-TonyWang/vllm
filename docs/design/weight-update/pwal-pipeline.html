@@ -1,0 +1,1408 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>权重定稿管道</title>
+<style>
+:root{
+  --ground:#f4f5f7;--surface:#fff;--surface-dim:#e9ebef;
+  --ink:#15181c;--ink-2:#444a52;--ink-3:#737a84;--ink-4:#a8aeb7;
+  --rule:#d9dce1;--rule-light:#e6e9ed;
+  --copper:#b0521c;--copper-soft:#f6e6da;--copper-wash:rgba(176,82,28,.055);
+  --blue:#2d6389;--blue-soft:#dce8f0;--blue-wash:rgba(45,99,137,.055);
+  --green:#0d7a53;--green-soft:#d4eee3;
+  --amber:#91650b;--amber-soft:#f7ecd3;
+  --red:#ad2f2a;--red-soft:#fadedd;
+  --violet:#63479f;--violet-soft:#e7e1f4;
+  --mono:ui-monospace,'SF Mono','Cascadia Code','Consolas',monospace;
+  --sans:system-ui,-apple-system,'PingFang SC','Noto Sans SC','Microsoft YaHei','Segoe UI',sans-serif;
+  --reading:min(68ch,100%);
+}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+  --ground:#12141a;--surface:#1a1d24;--surface-dim:#22262e;
+  --ink:#e5e8ec;--ink-2:#b0b6be;--ink-3:#848b95;--ink-4:#575e68;
+  --rule:#2e333c;--rule-light:#262a32;
+  --copper:#e08a4e;--copper-soft:#33220f;--copper-wash:rgba(224,138,78,.075);
+  --blue:#6ba8d0;--blue-soft:#1a2b38;--blue-wash:rgba(107,168,208,.075);
+  --green:#45c495;--green-soft:#10281f;
+  --amber:#dfae4e;--amber-soft:#2b2210;
+  --red:#e8756e;--red-soft:#2e1614;
+  --violet:#a691e0;--violet-soft:#1f1934;
+}}
+:root[data-theme="dark"]{
+  --ground:#12141a;--surface:#1a1d24;--surface-dim:#22262e;
+  --ink:#e5e8ec;--ink-2:#b0b6be;--ink-3:#848b95;--ink-4:#575e68;
+  --rule:#2e333c;--rule-light:#262a32;
+  --copper:#e08a4e;--copper-soft:#33220f;--copper-wash:rgba(224,138,78,.075);
+  --blue:#6ba8d0;--blue-soft:#1a2b38;--blue-wash:rgba(107,168,208,.075);
+  --green:#45c495;--green-soft:#10281f;
+  --amber:#dfae4e;--amber-soft:#2b2210;
+  --red:#e8756e;--red-soft:#2e1614;
+  --violet:#a691e0;--violet-soft:#1f1934;
+}
+:root[data-theme="light"]{
+  --ground:#f4f5f7;--surface:#fff;--surface-dim:#e9ebef;
+  --ink:#15181c;--ink-2:#444a52;--ink-3:#737a84;--ink-4:#a8aeb7;
+  --rule:#d9dce1;--rule-light:#e6e9ed;
+  --copper:#b0521c;--copper-soft:#f6e6da;--copper-wash:rgba(176,82,28,.055);
+  --blue:#2d6389;--blue-soft:#dce8f0;--blue-wash:rgba(45,99,137,.055);
+  --green:#0d7a53;--green-soft:#d4eee3;
+  --amber:#91650b;--amber-soft:#f7ecd3;
+  --red:#ad2f2a;--red-soft:#fadedd;
+  --violet:#63479f;--violet-soft:#e7e1f4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:0 auto;padding:0 24px}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface-dim);padding:2px 6px;border-radius:4px;word-break:break-word}
+strong{font-weight:650}
+p{max-width:var(--reading);margin-bottom:16px}
+h3{font-size:19px;font-weight:700;margin:36px 0 12px;letter-spacing:-.01em}
+a{color:var(--copper);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--copper) 35%,transparent)}
+a:hover{border-bottom-color:var(--copper)}
+a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--copper);outline-offset:2px}
+ul{max-width:var(--reading);margin-bottom:16px;padding-left:24px}
+ul li{margin-bottom:8px}
+
+/* ---------- hero ---------- */
+.hero{padding:72px 0 40px;border-bottom:1px solid var(--rule)}
+.hero-ey{font-family:var(--mono);font-size:12px;letter-spacing:.15em;text-transform:uppercase;color:var(--copper);margin-bottom:18px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.hero-ey::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--copper);flex:none}
+.hero h1{font-size:clamp(30px,4.6vw,46px);font-weight:800;line-height:1.14;letter-spacing:-.025em;margin-bottom:18px;text-wrap:balance}
+.hero h1 em{font-style:normal;color:var(--copper)}
+.hero-sub{font-size:17px;color:var(--ink-2);max-width:62ch;line-height:1.7}
+.hero-sub b{color:var(--ink);font-weight:600}
+
+/* ---------- table of contents ---------- */
+.toc{margin:36px 0 0;border-top:1px solid var(--rule);padding-top:22px;display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:22px}
+.toc-col .tl{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--copper);margin-bottom:9px}
+.toc-col ol{list-style:none;display:flex;flex-direction:column;gap:5px;padding:0;margin:0}
+.toc-col li{font-size:14px;color:var(--ink-2);display:flex;gap:9px;align-items:baseline}
+.toc-col li .n{font-family:var(--mono);font-size:12px;color:var(--ink-4);flex:none;min-width:1.4em}
+.toc-col a{border-bottom:none;color:var(--ink-2)}
+.toc-col a:hover{color:var(--copper)}
+
+/* ---------- part divider ---------- */
+.part{margin:76px 0 0;padding:26px 0 0;border-top:2px solid var(--ink)}
+.part-n{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin-bottom:8px}
+.part h2{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.25;margin-bottom:10px;text-wrap:balance}
+.part p{color:var(--ink-2);font-size:16px}
+
+/* ---------- sections ---------- */
+.section{padding:56px 0 0;scroll-margin-top:20px}
+.sec-lab{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--copper);margin-bottom:8px}
+.sec-t{font-size:26px;font-weight:700;letter-spacing:-.015em;margin-bottom:8px;line-height:1.3;text-wrap:balance}
+.sec-l{font-size:16px;color:var(--ink-2);max-width:var(--reading);margin-bottom:28px;line-height:1.75}
+.sec-lead{font-size:16px;color:var(--ink-2);max-width:var(--reading);margin-bottom:28px;line-height:1.75}
+
+/* ---------- shared blocks (inherited by ch1-3 markup) ---------- */
+.dia{background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:28px 24px;margin:24px 0 32px;overflow-x:auto}
+.dia-cap{font-family:var(--mono);font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center;letter-spacing:.02em;line-height:1.6}
+.cg{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:24px 0 32px}
+.cc{background:var(--surface);padding:20px}
+.cc .lb{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.cc .vl{font-family:var(--mono);font-size:28px;font-weight:700;line-height:1.2;margin-bottom:4px}
+.cc .dt{font-size:13px;color:var(--ink-3);line-height:1.55}
+.flow{display:flex;flex-direction:column;gap:0;align-items:center;margin:24px 0 32px}
+.fn-node{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:14px 20px;width:min(100%,560px)}
+.fn-node.hi{border-color:var(--blue);background:var(--blue-wash)}
+.fn-node .ft{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--blue)}
+.fn-node .fd{font-size:14px;color:var(--ink-2);margin-top:3px;line-height:1.6}
+.fa{width:2px;height:24px;background:var(--blue);position:relative}
+.fa::after{content:'';position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid var(--blue)}
+.sd{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:start;margin:24px 0 32px}
+@media(max-width:640px){.sd{grid-template-columns:1fr}.sc{display:none}}
+.sb{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:16px}
+.sb.ab{border-color:var(--blue);border-style:dashed}
+.sb .st{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--blue);margin-bottom:6px}
+.sb .sm{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);padding:3px 0;border-top:1px solid var(--rule-light)}
+.sb .sm:first-of-type{border-top:none}
+.sc{display:flex;align-items:center;padding-top:32px;color:var(--ink-4);font-size:20px}
+.is{display:flex;flex-direction:column;gap:8px}
+.ic{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:8px 12px;font-family:var(--mono);font-size:12.5px;display:flex;align-items:center;gap:8px}
+.ic .d{width:8px;height:8px;border-radius:50%;flex:none}
+.tw{overflow-x:auto;margin:24px 0 32px;border:1px solid var(--rule);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--surface)}
+th{text-align:left;font-family:var(--mono);font-weight:650;font-size:11.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);padding:12px 16px;border-bottom:1px solid var(--rule);background:var(--surface-dim);white-space:nowrap}
+td{padding:10px 16px;border-bottom:1px solid var(--rule-light);vertical-align:top;line-height:1.65}
+tr:last-child td{border-bottom:none}
+td code{font-size:12px;padding:1px 5px}
+.mc{margin:24px 0 32px}
+.mr{display:grid;grid-template-columns:80px 1fr 60px;gap:12px;align-items:center;margin-bottom:10px}
+.ml{font-family:var(--mono);font-size:13px;font-weight:600;text-align:right;white-space:nowrap}
+.mt{height:28px;background:var(--surface-dim);border-radius:4px;overflow:hidden}
+.mf{height:100%;border-radius:4px}
+.mv{font-family:var(--mono);font-size:13px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.co{border-left:3px solid var(--blue);background:var(--blue-wash);padding:16px 20px;border-radius:0 8px 8px 0;margin:24px 0 28px;font-size:15px;color:var(--ink-2);max-width:var(--reading);line-height:1.7}
+.co.am{border-left-color:var(--amber);background:var(--amber-soft)}
+.co.cu{border-left-color:var(--copper);background:var(--copper-wash)}
+.co.rd{border-left-color:var(--red);background:var(--red-soft)}
+.co.gn{border-left-color:var(--green);background:var(--green-soft)}
+.co strong{color:var(--ink)}
+.cb{background:var(--surface-dim);border:1px solid var(--rule);border-radius:8px;padding:16px 20px;font-family:var(--mono);font-size:13px;line-height:1.65;overflow-x:auto;margin:16px 0 24px;max-width:100%;white-space:pre;color:var(--ink-2)}
+.cb .kw{color:var(--violet);font-weight:600}
+.cb .fn{color:var(--blue)}
+.cb .cm{color:var(--ink-4);font-style:italic}
+.cb .ty{color:var(--amber)}
+.cb .st{color:var(--green)}
+.cb .bad{color:var(--red);font-weight:600}
+.cb .add{color:var(--green);font-weight:600}
+canvas.qv{display:block;margin:0 auto;max-width:100%;border-radius:6px}
+.pm{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin:24px 0 8px}
+.pm-node{background:var(--surface);border:1.5px solid var(--rule);border-radius:8px;padding:10px 12px;font-size:13px;font-weight:600;flex:1 1 116px;min-width:116px;text-align:center}
+.pm-node small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;margin-top:4px;line-height:1.5}
+.pm-node.to13{border-color:var(--green)}
+.pm-node.to14{border-color:var(--violet)}
+.pm-arrow{align-self:center;color:var(--ink-4);font-size:16px;flex:0 0 auto}
+.pm-inner{display:flex;gap:4px;justify-content:center;align-items:center;margin-top:8px;flex-wrap:wrap;color:var(--ink-4);font-size:11px}
+.pm-inner span{background:var(--surface-dim);border:1px dashed var(--rule);border-radius:4px;padding:2px 8px;font-size:11px;font-weight:400;color:var(--ink-2)}
+.mr2{display:grid;grid-template-columns:252px 1fr 64px;gap:12px;align-items:center;margin-bottom:8px}
+@media(max-width:640px){.mr2{grid-template-columns:136px 1fr 44px}}
+.mr2 .ml{font-size:12px}
+.stackbar{display:flex;height:36px;border-radius:6px;overflow:hidden;margin:18px 0 10px;border:1px solid var(--rule)}
+.stackbar>div{display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden}
+.sb-leg{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--ink-3);margin-bottom:24px}
+.sb-leg span{display:flex;align-items:center;gap:6px}
+.sb-leg .dot{width:10px;height:10px;border-radius:3px;flex:none}
+
+/* ---------- part II: staged pipeline rail ---------- */
+.stages{display:flex;flex-direction:column;margin:24px 0 32px}
+.stg{display:grid;grid-template-columns:34px 1fr;gap:16px}
+.stg-rail{display:flex;flex-direction:column;align-items:center}
+.stg-d{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:13px;font-weight:700;flex:none;border:1.5px solid var(--rule);background:var(--surface);color:var(--ink-3)}
+.stg-d.on{border-color:var(--blue);color:var(--blue);background:var(--blue-wash)}
+.stg-d.wr{border-color:var(--red);color:var(--red);background:var(--red-soft)}
+.stg-l{width:2px;flex:1;background:var(--rule);min-height:14px}
+.stg:last-child .stg-l{display:none}
+.stg-c{padding:3px 0 22px;min-width:0}
+.stg-t{font-family:var(--mono);font-size:14px;font-weight:650;margin-bottom:4px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.stg-t .src{font-size:11.5px;font-weight:400;color:var(--ink-4)}
+.stg-b{font-size:14.5px;color:var(--ink-2);line-height:1.68;max-width:64ch}
+.stg-b b{color:var(--ink);font-weight:600}
+
+/* ---------- part II: two channels ---------- */
+.chan{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0 12px}
+@media(max-width:680px){.chan{grid-template-columns:1fr}}
+.ch-card{background:var(--surface);border:1.5px solid var(--rule);border-radius:10px;padding:18px 20px}
+.ch-card.gov{border-color:var(--blue)}
+.ch-card.exempt{border-color:var(--amber)}
+.ch-h{font-family:var(--mono);font-size:13px;font-weight:700;margin-bottom:3px}
+.ch-card.gov .ch-h{color:var(--blue)}
+.ch-card.exempt .ch-h{color:var(--amber)}
+.ch-s{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);margin-bottom:14px}
+.ch-card ol{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:8px;counter-reset:s}
+.ch-card ol li{counter-increment:s;font-size:13.5px;color:var(--ink-2);line-height:1.6;padding-left:24px;position:relative;max-width:none}
+.ch-card ol li::before{content:counter(s);position:absolute;left:0;top:2px;font-family:var(--mono);font-size:10.5px;font-weight:700;width:16px;height:16px;border-radius:4px;display:flex;align-items:center;justify-content:center;background:var(--surface-dim);color:var(--ink-3)}
+.ch-card.gov ol li::before{background:var(--blue-soft);color:var(--blue)}
+.ch-card.exempt ol li::before{background:var(--amber-soft);color:var(--amber)}
+.ch-cost{font-size:13px;color:var(--ink-3);border-top:1px solid var(--rule-light);padding-top:11px;line-height:1.6}
+.ch-cost b{color:var(--ink-2)}
+
+/* ---------- part II: case study header ---------- */
+.case{padding:56px 0 0;scroll-margin-top:20px}
+.case-hd{display:flex;gap:14px;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap}
+.case-tag{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--red);background:var(--red-soft);border:1px solid color-mix(in srgb,var(--red) 30%,transparent);border-radius:5px;padding:4px 10px;flex:none}
+.chip{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:4px 10px;flex:none;white-space:nowrap}
+.chip.fixed{color:var(--green);background:var(--green-soft);border:1px solid color-mix(in srgb,var(--green) 32%,transparent)}
+.chip.open{color:var(--red);background:var(--red-soft);border:1px solid color-mix(in srgb,var(--red) 32%,transparent)}
+.chip.rejected{color:var(--amber);background:var(--amber-soft);border:1px solid color-mix(in srgb,var(--amber) 32%,transparent)}
+.case h3.case-t{font-size:24px;font-weight:750;letter-spacing:-.015em;line-height:1.3;margin:0 0 10px;text-wrap:balance}
+.facts{display:flex;gap:0;flex-wrap:wrap;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);margin:0 0 26px}
+.fact{flex:1 1 150px;padding:14px 20px 14px 0;margin-right:20px;border-right:1px solid var(--rule)}
+.fact:last-child{border-right:none;margin-right:0}
+.fact .fk{font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-4);margin-bottom:3px}
+.fact .fv{font-family:var(--mono);font-size:14px;font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1.45}
+
+/* ---------- part II: verdict grid ---------- */
+.verdict{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden;margin:24px 0 32px}
+.vc{background:var(--surface);padding:20px}
+.vc .vt{font-family:var(--mono);font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--red);margin-bottom:8px}
+.vc .vb{font-size:14px;color:var(--ink-2);line-height:1.68}
+.vc .vb b{color:var(--ink);font-weight:600}
+.vc .vs{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);margin-top:10px;padding-top:9px;border-top:1px solid var(--rule-light);line-height:1.55}
+
+/* ---------- series nav ---------- */
+.series{margin:76px 0 0;border-top:2px solid var(--ink);padding-top:26px}
+.series-n{font-family:var(--mono);font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--copper);margin-bottom:16px}
+.slist{display:flex;flex-direction:column;gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:10px;overflow:hidden}
+.srow{background:var(--surface);padding:14px 18px;display:grid;grid-template-columns:34px 1fr auto;gap:14px;align-items:baseline}
+.srow.here{background:var(--copper-wash)}
+.srow .si{font-family:var(--mono);font-size:12px;font-weight:700;color:var(--copper)}
+.srow .sn{font-size:14.5px;color:var(--ink);font-weight:600}
+.srow .sd{font-size:13px;color:var(--ink-3);margin-top:2px;line-height:1.55}
+.srow .sp{font-family:var(--mono);font-size:11.5px;color:var(--ink-4);white-space:nowrap}
+@media(max-width:640px){.srow{grid-template-columns:26px 1fr}.srow .sp{grid-column:2;margin-top:4px}}
+
+footer{margin:64px 0 48px;padding-top:20px;border-top:1px solid var(--rule);font-family:var(--mono);font-size:12px;color:var(--ink-4);display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+@media(max-width:600px){.wrap{padding:0 16px}.hero{padding:48px 0 30px}.section,.case{padding-top:42px}.cg{grid-template-columns:1fr 1fr}.mr{grid-template-columns:56px 1fr 48px}.fact{flex-basis:44%}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="hero-ey">vLLM 源码学习 · model_loader</div>
+  <h1>权重定稿管道：<br><em>process_weights_after_loading</em></h1>
+  <p class="hero-sub">Checkpoint 里的权重格式和 GPU kernel 期望的格式不同。<code>process_weights_after_loading</code> 在加载完成后跑<b>一次</b>，把权重翻译成 kernel 就绪的形态。它不是一个函数——而是<b>四个挂载点</b>按固定顺序执行，每个挂载点负责一类翻译。</p>
+
+  <nav class="toc">
+    <div class="toc-col">
+      <div class="tl">结构</div>
+      <ol>
+        <li><span class="n">1</span><a href="#ch1">四个挂载点</a></li>
+        <li><span class="n">2</span><a href="#ch2">量化层内部：四类变换</a></li>
+      </ol>
+    </div>
+    <div class="toc-col">
+      <div class="tl">机制</div>
+      <ol>
+        <li><span class="n">3</span><a href="#ch3">装回与委派：replace_parameter 家族</a></li>
+        <li><span class="n">4</span><a href="#ch4">从打补丁到立契约</a></li>
+      </ol>
+    </div>
+  </nav>
+</header>
+
+
+<section class="section" id="ch1">
+  <div class="sec-lab">第一章</div>
+  <h2 class="sec-t">四个挂载点：一个固定顺序</h2>
+  <p class="sec-l">加载完权重之后、推理开始之前，<code>model_loader/utils.py:96</code> 里的同名函数跑四个循环。它们不是可选的——跳过任何一个，对应类型的权重就是错误格式，kernel 输出垃圾。</p>
+
+  <div class="cb"><span class="cm"># model_loader/utils.py:96 — 入口函数，四个循环</span>
+<span class="kw">def</span> <span class="fn">process_weights_after_loading</span>(model, model_config, target_device):
+
+    <span class="cm"># ① 量化层：格式转换（transpose, repack, scale 合并, kernel shuffle）</span>
+    <span class="kw">for</span> _, module <span class="kw">in</span> model.<span class="fn">named_modules</span>():
+        <span class="kw">if</span> isinstance(quant_method, QuantizeMethodBase):
+            quant_method.<span class="fn">process_weights_after_loading</span>(module)
+
+    <span class="cm"># ② Attention 层：MLA 权重吸收、KV cache scale 定稿</span>
+    <span class="kw">for</span> _, module <span class="kw">in</span> model.<span class="fn">named_modules</span>():
+        <span class="kw">if</span> <span class="fn">is_deferred_attention_layer</span>(module):
+            module.<span class="fn">process_weights_after_loading</span>(model_config.dtype)
+
+    <span class="cm"># ③ HPC 模块：派生状态的 float32 拷贝</span>
+    <span class="kw">for</span> _, module <span class="kw">in</span> model.<span class="fn">named_modules</span>():
+        <span class="kw">if</span> isinstance(module, HpcModule):
+            module.<span class="fn">process_weights_after_loading</span>(model)
+
+    <span class="cm"># ④ Model 级：模型自己的后处理 hook</span>
+    <span class="kw">if</span> <span class="fn">hasattr</span>(model, <span class="st">"process_weights_after_loading"</span>):
+        model.<span class="fn">process_weights_after_loading</span>()</div>
+
+  <p>四个循环<strong>同名不同义</strong>——都叫 <code>process_weights_after_loading</code>，但挂在不同的对象上，做完全不同的事。下面逐个展开。</p>
+
+  <h3>挂载点 ①：量化层（88 个 quant_method 实现）</h3>
+  <p>遍历所有持有 <code>QuantizeMethodBase</code> 的 module，调它的 <code>process_weights_after_loading</code>。这是<strong>规模最大的挂载点</strong>——88 个实现、137 个 <code>replace_parameter</code> 调用、覆盖全部量化格式。</p>
+
+  <p>做什么：把 checkpoint 的存储格式翻译成 kernel 的运行格式。具体操作因量化方案而异——第二章会展开四类变换。几个典型例子：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>量化方案</th><th>做什么</th><th>为什么</th></tr></thead>
+      <tbody>
+        <tr><td>FP8 per-tensor</td><td>合并 Q/K/V 三个分片的 scale 到一个 max scale → 重量化 → 转置 [N,K]→[K,N]</td><td><code>scaled_mm</code> 需要统一 scale + 列主序</td></tr>
+        <tr><td>FP8 block</td><td>委派给 kernel 层（DEEPGEMM: scale layout 转换；Triton: no-op）</td><td>不同后端要求不同的 scale 内存布局</td></tr>
+        <tr><td>GPTQ / Marlin</td><td>INT4 bit 重打包 → Marlin tile 重排 → scale permute + pad</td><td>Marlin 用 warp-level shuffle 读权重，需要特定 tile 格式</td></tr>
+        <tr><td>FP8 MoE</td><td>kernel format shuffle + <code>_setup_kernel</code> 组装运行时 kernel 对象</td><td>MoE 的 fused expert 需要特定数据排列 + kernel 初始化</td></tr>
+        <tr><td>BF16（无量化）</td><td>MoE: 按后端 shuffle（或 no-op）+ 建 kernel；Dense: pass</td><td>MoE 即使无量化也需要 kernel format 转换</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>每个实现内部走同一条管道：<strong>读取 → 变换 → 装回 → 委派 kernel → MoE 定稿</strong>。第二章讲变换的四种类型，第三章讲装回机制。</p>
+
+  <h3>挂载点 ②：Attention 层（MLA 权重吸收 + KV cache scale）</h3>
+  <p>遍历所有 Attention 层。<strong>必须排在 ① 之后</strong>——② 的第一步就是反量化 ① 管辖的权重：有些 Attention 层要从一个大矩阵做矩阵分解、推导出派生权重，分解要求 BF16 完整数值，而 checkpoint 里这个矩阵可能是 FP8 存储的，还原回 BF16 依赖 ① 合并/统一后的 scale。① 没跑完 = 用错误的 scale 还原 = 派生权重全错。以 DeepSeek-V3 的 MLA（Multi-head Latent Attention）为例：</p>
+
+  <div class="cb"><span class="cm"># mla_attention.py:1016 — MLA 权重吸收</span>
+
+<span class="cm"># 第一步：把 kv_b_proj 从量化格式还原为高精度（BF16）</span>
+<span class="cm"># 这一步依赖 ① 已经把 scale 处理好了</span>
+<span class="cm"># 如果 ① 没跑：scale 可能还是分片的 → 反量化结果错误</span>
+kv_b_proj_weight = <span class="fn">get_and_maybe_dequant_weights</span>(self.kv_b_proj)
+
+<span class="cm"># 第二步：从反量化后的大矩阵里切出两个小矩阵</span>
+W_UK, W_UV = kv_b_proj_weight.<span class="fn">split</span>([qk_nope_head_dim, v_head_dim], dim=-<span class="n">1</span>)
+
+<span class="cm"># 第三步：变换形状，让后续矩阵乘法能直接使用</span>
+W_UK_T = W_UK.<span class="fn">permute</span>(<span class="n">1</span>, <span class="n">2</span>, <span class="n">0</span>)   <span class="cm"># [L,N,P] → [N,P,L]</span>
+W_UV   = W_UV.<span class="fn">transpose</span>(<span class="n">0</span>, <span class="n">1</span>)    <span class="cm"># [L,N,V] → [N,L,V]</span></div>
+
+  <p>这个挂载点还处理 KV cache scale 定稿（<code>attention.py:580</code>）——把 checkpoint 带的 q/k/v/prob scale 复制到内部 buffer，没带的初始化为 1.0。</p>
+
+  <h3>挂载点 ③：HPC 模块</h3>
+  <p>目前只有一个实现：<code>HpcRopeNorm</code>（<code>hpc/rope_norm.py:227</code>）。做的事情很简单——把 RMSNorm 权重的 float32 拷贝存一份到自己的 <code>qnorm_weight</code> / <code>knorm_weight</code> 参数上。</p>
+
+  <p>为什么单独一个挂载点？因为 HPC 模块的 <code>process_weights_after_loading</code> 接收的是 <code>model</code>（整个模型），不是 <code>layer</code>（单层）。它需要跨层访问其他层的权重。签名不同，不能和 ① ② 混在同一个循环里。</p>
+
+  <h3>挂载点 ④：Model 级 hook</h3>
+  <p>最后检查模型对象本身有没有 <code>process_weights_after_loading</code>。目前只有一个模型用到：<code>DeepseekV4ForCausalLMROCM</code>（<code>deepseek_v4/amd/model.py:1022</code>）——做 ROCm 上的 AITER B-preshuffle。</p>
+
+  <p>这是"逃生口"——当某个后处理逻辑不属于任何一层，而是需要看整个模型时，模型自己可以实现这个 hook。</p>
+
+  <h3>顺序依赖总结</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>挂载点</th><th>对象</th><th>签名</th><th>规模</th><th>依赖</th></tr></thead>
+      <tbody>
+        <tr style="background:var(--blue-wash)"><td><strong>① 量化层</strong></td><td><code>quant_method</code></td><td><code>(module)</code></td><td>88 个实现</td><td>无</td></tr>
+        <tr style="background:var(--green-soft)"><td><strong>② Attention</strong></td><td><code>AttentionLayerBase</code></td><td><code>(act_dtype)</code></td><td>3 个类</td><td>依赖 ①（反量化 kv_b_proj 需要已处理的 scale）</td></tr>
+        <tr><td><strong>③ HPC</strong></td><td><code>HpcModule</code></td><td><code>(model)</code></td><td>1 个类</td><td>依赖 ①（读取已处理的 norm 权重）</td></tr>
+        <tr><td><strong>④ Model</strong></td><td>模型对象本身</td><td><code>()</code></td><td>1 个模型</td><td>依赖 ①②③（全部完成后的最终处理）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="co"><strong>四个挂载点，一个原则：</strong>签名不同说明它们是四种不同粒度的后处理，不是同一件事的重复；顺序是硬依赖，不是惯例。</div>
+</section>
+
+<section class="section" id="ch2">
+  <div class="sec-lab">第二章</div>
+  <h2 class="sec-t">变换：四类操作</h2>
+  <p class="sec-l">管道第 ② 段。「变换」不是钦点的固定几种操作——把 145 个实现里统计到的变换函数按<strong>改动的对象</strong>归类，恰好是四类：改数值、改逻辑位置、改 bit 编码、改字节解释。每类解决一个不同层面的「checkpoint 和 kernel 不一致」。</p>
+
+  <h3>2.1 数值重量化：合并分片 Scale</h3>
+  <p>vLLM 把 Q/K/V 三个投影融合成一个 <code>QKVParallelLinear</code>，但 checkpoint 中每个分片有独立的 scale。<code>scaled_mm</code> 只接受整个权重用<strong>一个 scale</strong>——所以必须取三者最大值（统计里 <code>.max()</code> 的来源），再对每个分片反量化、用统一 scale 重新量化（<code>scaled_fp8_quant()</code> 的来源）：</p>
+  <div class="dia">
+    <canvas class="qv" id="scale-merge-canvas" width="680" height="180"></canvas>
+    <div class="dia-cap">三个独立 scale 的分片必须统一为一个 scale，否则 matmul 计算的数值全部错误</div>
+  </div>
+  <div class="cb"><span class="cm"># w8a8_utils.py — process_fp8_weight_tensor_strategy() 核心逻辑</span>
+max_w_scale = weight_scale.<span class="fn">max</span>()
+<span class="kw">for</span> 每个逻辑分片 (q / k / v):
+    weight_dq = <span class="fn">per_tensor_dequantize</span>(shard, weight_scale[idx])
+    shard, _  = ops.<span class="fn">scaled_fp8_quant</span>(weight_dq, max_w_scale)  <span class="cm"># requant</span></div>
+
+  <h3>2.2 布局变换：转置 + contiguous</h3>
+  <p>Checkpoint 权重存储为 <code>[N, K]</code>——N 行 K 列，每行是一个输出神经元的权重。但 CUTLASS 的 <code>scaled_mm</code> 要求 <code>[K, N]</code> 布局。转置改变的是<strong>矩阵元素的逻辑位置</strong>——数值本身不变：</p>
+  <div class="dia">
+    <canvas class="qv" id="transpose-canvas" width="680" height="200"></canvas>
+    <div class="dia-cap">转置：行列互换。A[i][j] 变成 A'[j][i]，数值不变，位置变了</div>
+  </div>
+  <p>一个容易忽略的细节：<code>.t()</code> 在 PyTorch 里<strong>不移动任何数据</strong>——它只改 stride 元数据、返回一个视图，物理内存一个字节没动。而底层 kernel（CUTLASS / cuBLAS）为了向量化加载要求输入<strong>物理连续</strong>：直接喂 non-contiguous 视图，要么报错，要么按连续假设读出错误数据。所以真正的高频组合是 <code>.t().contiguous()</code>——先换逻辑坐标，再显式触发一次物理搬运。这解释了统计里 <code>contiguous</code>（34 个实现、74 次）比 <code>t</code>（30 个、52 次）还高频：<strong>一切布局变换最终都要落到密集内存上</strong>，<code>view()</code>、<code>permute()</code> 之后同样要跟它。</p>
+
+  <div class="co"><strong>顺带记住：</strong>「变换」这一段的<strong>输出</strong>几乎必然是新分配的内存，而它的<strong>中间产物</strong>常常是旧存储的视图——这个「视图 ≠ 数据」的组合到第三章会变成 <code>prefer_copy</code> 的 aliasing 陷阱。</div>
+
+  <h3>2.3 bit 级重编码：重打包</h3>
+  <p>INT4 量化（GPTQ/AWQ）独有的问题。PyTorch 没有 int4 类型，所以把 8 个 4-bit 值打包进一个 int32。问题是：<strong>不同工具的打包方式不一样</strong>。统计里的 <code>ops.gptq_marlin_repack</code>、<code>pack_quantized_values_into_int32</code>、NvFP4 的 <code>swizzle_blockscale</code> 都属于这一类。</p>
+  <div class="dia">
+    <canvas class="qv" id="repack-canvas" width="680" height="340"></canvas>
+    <div class="dia-cap">同样 8 个 INT4 值（a b c d e f g h），AWQ 和 GPTQ/Marlin 的 bit 排列完全不同</div>
+  </div>
+  <p>重打包改变的是<strong>每个 int32 内部各 bit 代表哪个值</strong>。矩阵的逻辑形状没变，但字节级的编码方式变了。此外：</p>
+  <ul style="max-width:var(--reading);margin-bottom:16px;padding-left:24px">
+    <li style="margin-bottom:8px"><strong>AWQ 还有维度问题</strong>：AWQ 沿输出维度（dim=1）打包，Marlin 要求沿输入维度（dim=0）打包——除了 bit 顺序，还要改打包方向</li>
+    <li style="margin-bottom:8px"><strong>Marlin tile 重排</strong>：Marlin kernel 还要把线性存储的权重拆成固定大小的 tile，按 GPU warp 的内存访问模式重排——让 32 个线程能同时高效读取权重</li>
+  </ul>
+
+  <h3>2.4 dtype 迁移</h3>
+  <p><code>.to()</code> 出现在 22 个实现里：把加载时以高精度存放的 scale 降到 kernel 要求的 dtype、把辅助张量挪到目标设备。没有花哨的数学，但漏掉一步，kernel 读到的就是被错误解释的字节。</p>
+
+  <div class="co"><strong>四类变换的本质区别：</strong><br>
+  <strong>数值重量化</strong> = 改数值本身（dequant → requant）<br>
+  <strong>布局变换</strong> = 改元素的逻辑位置（数值不变）<br>
+  <strong>bit 级重编码</strong> = 改 bit 在 int32 内的排列（逻辑形状不变）<br>
+  <strong>dtype 迁移</strong> = 改字节的解释方式</div>
+
+  <h3>2.5 三条完整路径实例</h3>
+
+  <p><strong>FP8——最简路径</strong>（变换① + ②，然后装回、委派）：</p>
+  <div class="cb"><span class="cm"># fp8.py:385 — Fp8LinearMethod.process_weights_after_loading()</span>
+
+<span class="cm"># 变换①: 合并分片 scale（QKV 融合层需要）</span>
+weight, weight_scale, input_scale = <span class="fn">process_fp8_weight_tensor_strategy</span>(
+    weight, weight_scale, layer.logical_widths,  <span class="cm"># logical_widths = [q, k, v]</span>
+    getattr(layer, <span class="st">"input_scale"</span>, <span class="kw">None</span>),
+)
+
+<span class="cm"># 变换②: 转置</span>
+weight = weight.<span class="fn">t</span>()  <span class="cm"># [N, K] → [K, N]，CUTLASS 要求列主序</span>
+
+<span class="cm"># 装回: 替换参数（→ 第三章）</span>
+<span class="fn">replace_parameter</span>(layer, <span class="st">"weight"</span>, weight.data)
+<span class="fn">replace_parameter</span>(layer, <span class="st">"weight_scale"</span>, weight_scale.data)
+
+<span class="cm"># 委派: 让选中的 kernel 做后端专属的定稿（→ 第三章）</span>
+self.fp8_linear.<span class="fn">process_weights_after_loading</span>(layer)</div>
+
+  <p><strong>GPTQ——委派链最深的路径</strong>（QuantMethod 层几乎全部转交 kernel 层）：</p>
+  <div class="cb"><span class="cm"># auto_gptq.py:453 → 整体委派给 kernels/linear/mixed_precision/marlin.py:88</span>
+
+<span class="cm"># 变换②': g_idx 排序（act_order=True 时，Marlin 靠排序索引保内存局部性）</span>
+g_idx, sort_indices = <span class="fn">marlin_sort_g_idx</span>(layer.g_idx)
+
+<span class="cm"># 变换③: repack 成 Marlin tile 格式（warp-level shuffle 读权重，不 repack 读错位置）</span>
+weight = <span class="fn">ops.gptq_marlin_repack</span>(qweight, perm=sort_indices,
+                                size_k=padded_k, size_n=padded_n, num_bits=4)
+
+<span class="cm"># Scale 填充 + 排列，随后 replace_parameter 装回</span>
+scales = <span class="fn">marlin_permute_scales</span>(<span class="fn">marlin_pad_scales</span>(scales, ...))</div>
+
+  <p><strong>AWQ</strong> 不是第三条路：<code>_convert_awq_to_standard_format()</code>（awq_marlin.py:493）先把交错的 bit 排列和打包维度归一化成标准 GPTQ 格式（2.3 的图展示过差异），然后走和 GPTQ 完全相同的 Marlin 委派链。</p>
+
+  <h3>2.6 什么情况下才需要副本</h3>
+
+  <p>前面五节讲的变换全都是<strong>替换</strong>：转置完、repack 完，旧格式就没人要了，<code>replace_parameter</code> 装回去就结束。<strong>副本是另一回事——它意味着旧格式还有人在用。</strong></p>
+
+  <p>在 vLLM 里这基本只有一种成因：<strong>prefill 和 decode 要不同的权重布局，而且两条路径同时都得活着。</strong>canonical 参数喂 prefill 的 chunked kernel，fused decode kernel 要另一种连续布局——不能二选一，只能多存一份。</p>
+
+  <p>但「多存一份」优先应该是<strong>视图</strong>而不是副本。只要两种布局能用同一块存储的不同 shape/stride 表达，视图就严格更优：不花显存，而且母体被 <code>copy_()</code> 改写时它自动跟着新。vLLM 里最干净的例子是 mamba2——<code>conv_weights</code> 是 <code>self.conv1d.weight.view(...)</code>，注册成 <code>persistent=False</code> 的 buffer，而且建在 <code>__init__</code> 里（<code>mamba_mixer2.py:441</code>）。它<strong>不需要被维护</strong>，因为它不是一份数据，是同一份数据的另一种看法。</p>
+
+  <p>只有视图顶不住——真需要一次物理重排——才轮到副本。K3 的 conv 就是：主参数按 <code>[3·H·128, 4]</code> 存，fused decode kernel 要 <code>[3, 4, H·128]</code> 且必须连续，stride 表达不出来。</p>
+
+  <div class="co am"><strong>于是问题只剩「什么时候生成它」，这也是本分支的核心改动：</strong>保留 fused decode 需要的副本，但<strong>不在 checkpoint loader 里更新它</strong>，而是在<strong>所有 canonical 权重加载完成之后统一生成</strong>。<br><br>这就是 <code>process_weights_after_loading</code> 这个名字的正面表述——<strong>after loading 是契约，不是描述</strong>。weight loader 每次被调用只看得见自己那一片分片，谁都不知道自己是不是最后一个；在 loader 里维护派生副本，等于赌加载顺序。<br><br>反面教材见「显存生命周期」篇第六章的 <strong>P5「loader 副作用重建」</strong>和 <strong>R3b「搭便车重建」</strong>：两者都是拿一个局部信号去近似「所有权重都到齐了」这个全局事实。pwal 是唯一持有那个事实的位置。K3 conv 上具体怎么翻车的，见事故记录篇 <code>7c52395d</code>。</div>
+
+</section>
+
+<!-- ═══ CH3 ═══ -->
+<section class="section" id="ch3">
+  <div class="sec-lab">第三章</div>
+  <h2 class="sec-t">装回与委派：replace_parameter 家族与 kernel 两阶段</h2>
+  <p class="sec-l">管道第 ③④⑤ 段。变换完的张量要装回 layer——「装回」看似一行赋值，实际是一个<strong>有 6 种写法、约 370 个调用点的家族</strong>，写法之间的区别对应三条不同的正确性保证。本章从家族全貌讲到收敛点 <code>replace_parameter</code>，再讲清一个精妙的设计决策（<code>prefer_copy</code> 为什么默认 False），最后是委派机制和 MoE 定稿。</p>
+
+  <h3>3.1 装回是一个家族：7 种写法</h3>
+  <p>扫描 145 个实现中所有修改 layer 参数注册表的调用点：</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>写法</th><th>调用 / 实现数</th><th>机制</th><th>典型场景</th></tr></thead>
+      <tbody>
+        <tr style="background:var(--blue-wash)"><td><code>replace_parameter(layer, name, new)</code></td><td><strong>137 / 40</strong></td><td>新建 Parameter + 迁移元数据（或原地拷贝）</td><td>标准入口，官方推荐</td></tr>
+        <tr><td><code>layer.w = Parameter(new)</code><br>（含 <code>setattr</code> 变体）</td><td>122 / 37</td><td>直接重绑定为新对象</td><td>老写法，正在迁移</td></tr>
+        <tr><td><code>param.data = new</code></td><td>36 / 14</td><td>保留 Parameter 对象，只换底层张量</td><td>变换闭包内（Marlin 的 <code>transform_w_q</code>）</td></tr>
+        <tr><td><code>layer.w = None</code> / <code>setattr None</code> / <code>delattr</code></td><td>41 / 20</td><td>删除参数</td><td>清理已合并进权重的 scale</td></tr>
+        <tr><td><code>register_parameter(name, p)</code></td><td>15 / 9</td><td>显式注册（含新增参数名）</td><td>后处理中「凭空」新增参数</td></tr>
+        <tr><td><code>param.copy_(new)</code></td><td>13 / 3</td><td>原地拷贝，地址不变</td><td>CUDA Graph / RL 重载敏感路径</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>3.2 三条保证的坐标系</h3>
+  <p>为什么装个参数要这么讲究？因为不同写法给出的<strong>保证不同</strong>。直接 <code>layer.weight = new_tensor</code> 会踩三个坑：</p>
+
+  <div class="cg" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr))">
+    <div class="cc">
+      <div class="lb" style="color:var(--red)">坑 1: torch.compile 失效</div>
+      <div class="dt" style="margin-top:8px">直接赋值的张量不是 <code>nn.Parameter</code>，TorchDynamo 看不到它，导致图编译断裂或行为错误。</div>
+    </div>
+    <div class="cc">
+      <div class="lb" style="color:var(--red)">坑 2: weight_loader 丢失</div>
+      <div class="dt" style="margin-top:8px"><code>weight_loader</code> 记录了 TP 分片方式。丢了它，RL 训练循环重新加载权重时会崩溃。</div>
+    </div>
+    <div class="cc">
+      <div class="lb" style="color:var(--red)">坑 3: CUDA Graph 失效</div>
+      <div class="dt" style="margin-top:8px">CUDA Graph 捕获时记录了张量的内存地址。新建张量 = 新地址 = 图重放时访问野指针。</div>
+    </div>
+  </div>
+
+  <p>三个坑对应三条保证——<strong>注册可见性</strong>（在 <code>_parameters</code> 里，torch.compile / state_dict 看得见）、<strong>元数据存活</strong>（<code>weight_loader</code> 等属性跟着走）、<strong>地址稳定</strong>（<code>data_ptr</code> 不变，CUDA Graph 重放安全）。把家族主要成员放进这个坐标系：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>写法</th><th>注册可见</th><th>weight_loader 存活</th><th>data_ptr 稳定</th></tr></thead>
+      <tbody>
+        <tr><td><code>layer.w = Parameter(new)</code></td><td>✓</td><td>✗ 新对象，属性丢失</td><td>✗</td></tr>
+        <tr><td><code>param.data = new</code></td><td>✓ 对象没换</td><td>✓ 属性挂在对象上，自动存活</td><td>✗ 底层张量换了</td></tr>
+        <tr><td><code>param.copy_(new)</code></td><td>✓</td><td>✓</td><td>✓ 但要求 shape/dtype 完全一致</td></tr>
+        <tr style="background:var(--blue-wash)"><td><code>replace_parameter(...)</code></td><td>✓</td><td>✓ 显式迁移</td><td>✓（<code>prefer_copy=True</code> 时）</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>3.3 replace_parameter：家族的收敛点</h3>
+  <div class="cb"><span class="cm"># vllm/model_executor/utils.py:47</span>
+<span class="kw">def</span> <span class="fn">replace_parameter</span>(layer, param_name, new_data, prefer_copy=<span class="kw">False</span>):
+
+    <span class="cm"># 语义 1: new_data=None → 删除（覆盖删除组写法）</span>
+    <span class="kw">if</span> new_data <span class="kw">is</span> <span class="kw">None</span>:
+        <span class="fn">setattr</span>(layer, param_name, <span class="kw">None</span>); <span class="kw">return</span>
+
+    <span class="cm"># 语义 2: prefer_copy=True 且 shape/dtype/device 匹配 → 原地拷贝</span>
+    <span class="cm">#         保留内存地址（覆盖 copy_ 写法，CUDA Graph 安全）</span>
+    <span class="kw">if</span> prefer_copy <span class="kw">and</span> 兼容:
+        old_param.<span class="fn">copy_</span>(new_data); <span class="kw">return</span>
+
+    <span class="cm"># 语义 3: 默认 → 新建 Parameter + 迁移 weight_loader</span>
+    <span class="cm">#         （覆盖「直接赋值 + 手工搬元数据」写法；旧参数不存在则是新增）</span>
+    new_param = <span class="ty">nn.Parameter</span>(new_data, requires_grad=<span class="kw">False</span>)
+    <span class="kw">if</span> <span class="fn">hasattr</span>(old_param, <span class="st">"weight_loader"</span>):
+        <span class="fn">set_weight_attrs</span>(new_param, {<span class="st">"weight_loader"</span>: old_param.weight_loader})
+    <span class="fn">setattr</span>(layer, param_name, new_param)</div>
+  <p>它把家族里散落的手工写法收进一个入口：删除、原地更新、重绑定、新增（<code>getattr(layer, name, None)</code> 允许旧参数不存在）——4 种终态需求全覆盖。剩下的写法要么是历史遗留（122 处直接赋值在逐步迁移），要么有正当理由：<code>param.data = new</code> 常出现在变换闭包里，因为它天然保留 <code>BasevLLMParameter</code> 对象及其布局属性（<code>permute_param_layout_</code> 要读它们），闭包只负责换数据；<code>register_parameter</code> 用于新增 checkpoint 里不存在的参数（如 Marlin 的 <code>input_global_scale</code>）。</p>
+
+  <h3>3.4 为什么 prefer_copy 默认 False？首载与重载的本质区别</h3>
+  <p>一个自然的疑问：既然原地拷贝保住所有三条保证，为什么不默认开？答案藏在<strong>时间轴</strong>里——地址稳定只在「已有人引用旧地址」时才有意义：</p>
+
+  <div class="dia">
+    <canvas class="qv" id="reload-timeline-canvas" width="720" height="470"></canvas>
+    <div class="dia-cap">左：首次加载时 pwal 发生在 CUDA Graph 捕获之前——没人引用旧地址，重绑定随便换。右：RL 重载时 pwal 重跑，此时图已持有地址——必须原地拷贝</div>
+  </div>
+
+  <p>全代码库 <code>prefer_copy=True</code> 只有一处调用，且写法印证了这个时间轴（unquantized_fused_moe_method.py:176）：</p>
+  <div class="cb"><span class="cm"># 首次调用: moe_kernel 尚未建立 → 正常重绑定</span>
+<span class="cm"># RL 权重更新重跑 pwal: kernel 已建立、CUDA Graph 可能已捕获地址 → 原地拷贝</span>
+is_weight_update = self.moe_kernel <span class="kw">is not</span> <span class="kw">None</span>
+<span class="fn">replace_parameter</span>(layer, <span class="st">"w13_weight"</span>, w13_new, prefer_copy=is_weight_update)
+<span class="fn">replace_parameter</span>(layer, <span class="st">"w2_weight"</span>,  w2_new,  prefer_copy=is_weight_update)</div>
+
+  <p>除了「首载保地址零收益」，默认 True 还有一个更致命的问题——<strong>aliasing</strong>。变换输出经常是旧参数存储的<strong>视图</strong>（2.2 节讲过 <code>.t()</code> 不搬数据）。对重叠内存做 <code>old.copy_(view_of_old)</code> 在 PyTorch 是未定义行为，而方阵恰好能通过 shape/dtype 检查：</p>
+
+  <div class="dia">
+    <canvas class="qv" id="aliasing-canvas" width="680" height="330"></canvas>
+    <div class="dia-cap">方阵转置视图与原参数共享同一块 storage。逐元素 copy_ 时先写 b 的位置（← d），随后要读 b 时读到的已是脏值——静默数据损坏，无任何报错</div>
+  </div>
+
+  <p>归纳成三个理由：</p>
+  <ul style="max-width:var(--reading);margin-bottom:16px;padding-left:24px">
+    <li style="margin-bottom:8px"><strong>Aliasing 静默损坏</strong>：opt-in 把「new_data 不 alias 旧存储」的举证责任交给唯一知道数据来历的调用者</li>
+    <li style="margin-bottom:8px"><strong>首载保地址零收益，反有语义成本</strong>：copy 路径会保留旧参数上已过期的 checkpoint 布局属性（output_dim/packed_dim）；rebind 故意换成干净对象、只迁移 weight_loader</li>
+    <li style="margin-bottom:8px"><strong>多数路径 copy 根本不可能</strong>：变换后 shape/dtype 大概率已变（转置、int32 打包、BF16→FP8），默认 True 只是白做一遍兼容检查</li>
+  </ul>
+  <div class="co"><strong>更准确的表述：</strong>这不该是布尔默认值，而是「首载 rebind、重载 copy」的自动判断。现状把判断留给调用者（<code>is_weight_update</code>）；要彻底统一，可以让 <code>replace_parameter</code> 自己感知 reload 状态 + 做 storage 重叠检测，届时 <code>prefer_copy</code> 参数本身都可以消失。</div>
+
+  <h3>3.5 能否全部统一到 replace_parameter？</h3>
+  <p>约 375 个调用点，按可迁移性分布：</p>
+  <div class="stackbar">
+    <div style="width:36.5%;background:var(--blue)">已统一 137</div>
+    <div style="width:48%;background:var(--green)">可机械迁移 ~180</div>
+    <div style="width:15.5%;background:var(--red)">需重构 / 逐点审 ~58</div>
+  </div>
+  <div class="sb-leg">
+    <span><span class="dot" style="background:var(--blue)"></span> 已是 replace_parameter（137）</span>
+    <span><span class="dot" style="background:var(--green)"></span> 直接赋值 122 · =None 30 · copy_ 13 · register 15</span>
+    <span><span class="dot" style="background:var(--red)"></span> .data= 中间态 36 · delattr 11 · 裸 tensor 等 11</span>
+  </div>
+
+  <p>红色部分的阻碍是真实的语义差异，不是工作量问题：</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>阻碍</th><th>规模</th><th>为什么不能盲替</th></tr></thead>
+      <tbody>
+        <tr><td><code>param.data =</code> 中间态</td><td>36 处</td><td>变换管道中途要保持 <code>BasevLLMParameter</code> 子类身份——<code>permute_param_layout_</code> 读对象上的布局属性。消除它需要把变换重构成纯函数（布局显式传参），<code>convert_to_*_moe_kernel_format</code> 那套「只返回张量、调用者安装」已经是这个方向</td></tr>
+        <tr><td><code>delattr</code> 语义</td><td>11 处</td><td><code>delattr</code> 后 <code>hasattr</code> 为 False；<code>replace_parameter(None)</code> 留下值为 None 的属性、<code>hasattr</code> 仍 True。humming.py:505 真的用 <code>if not hasattr(layer, "weight")</code> 做状态检查</td></tr>
+        <tr><td>逐点审查项</td><td>~11 处</td><td>自定义属性——replace_parameter 只迁移 weight_loader，旧参数上的其他寄生属性会丢，迁移前逐点核对；tied/shared 权重（docstring 明确禁止）；故意不注册的 workspace 包成 Parameter 会进 state_dict</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="co am"><strong>清醒剂：</strong>迁移到 replace_parameter 是 reload-safe 的<strong>必要条件，不是充分条件</strong>。保住 weight_loader 之后，往 kernel 布局的参数里灌 checkpoint 布局的数据，仍要靠重跑 pwal 等机制配合——上游 layerwise reload 系列（#38995 / #42481 / #44814）修的正是这些。</div>
+
+  <h3>3.6 委派：kernel 两阶段生命周期</h3>
+  <p>统计表第三名是 pwal <strong>自己</strong>（41 个实现委派内层对象的同名方法）——因为后处理是两级的：<strong>QuantMethod 层</strong>管方案语义（scale 合并、AWQ→GPTQ 格式归一），<strong>Kernel 层</strong>管后端布局（Marlin repack、CUTLASS pad、swizzle）。两级用同名方法串成两阶段生命周期：</p>
+
+  <div class="flow">
+    <div class="fn-node"><div class="ft">阶段 1：create_weights() 中选择 + 创建 kernel</div><div class="fd"><code>choose_scaled_mm_linear_kernel()</code> 按优先级遍历候选 kernel 列表<br>→ 每个候选调用 <code>is_supported(gpu)</code> + <code>can_implement(config)</code><br>→ 第一个通过的被实例化为 <code>self.fp8_linear</code> 或 <code>self.kernel</code></div></div>
+    <div class="fa"></div>
+    <div class="fn-node hi"><div class="ft">阶段 2：process_weights_after_loading() 中定稿</div><div class="fd"><code>self.kernel.process_weights_after_loading(layer)</code><br>→ 权重已加载完毕，现在可以做依赖实际数据的操作<br>→ Marlin：repack 权重 + permute scale + 分配 workspace<br>→ CUTLASS FP8：通常是 no-op（转置已在 QuantMethod 层完成）</div></div>
+  </div>
+
+  <div class="co"><strong>为什么分两阶段？</strong>因为 <code>create_weights()</code> 时权重还没加载——只有 shape 和 dtype 信息，没有实际数据。而 Marlin 的 repack、DeepGEMM 的 pad 等操作需要<strong>读取实际权重值</strong>才能执行。所以把数据无关的操作（选 kernel、定义参数 shape）放在阶段 1，把数据相关的操作（repack、permute）放在阶段 2。</div>
+
+  <p>Kernel 层内部有两个标准工具，都是「变换 + 装回」的封装：</p>
+  <div class="cb"><span class="cm"># kernels/linear/mixed_precision/MPLinearKernel.py:71</span>
+<span class="kw">def</span> <span class="fn">_transform_param</span>(self, layer, name, fn):
+    new_param = <span class="fn">fn</span>(getattr(layer, name))       <span class="cm"># 变换</span>
+    <span class="fn">replace_parameter</span>(layer, name,             <span class="cm"># 装回</span>
+        torch.nn.<span class="ty">Parameter</span>(new_param.data, requires_grad=<span class="kw">False</span>))
+
+<span class="cm"># parameter.py:544 — 变换前先把权重「摆正」</span>
+<span class="fn">permute_param_layout_</span>(param, input_dim=0, output_dim=1, packed_dim=0)
+<span class="cm"># 各家 checkpoint 的打包维度不一致（AWQ 按 dim=1、GPTQ 按 dim=0）</span>
+<span class="cm"># 先规范到统一朝向，后续 repack 逻辑就只需要写一份</span></div>
+
+  <h3>3.7 MoE 定稿链：_setup_kernel</h3>
+  <p>MoE 的后处理比 Linear 多一整段：权重定稿后要<strong>现场组装运行时 kernel 对象</strong>。这就是 <code>_setup_kernel</code>、<code>get_fused_moe_quant_config</code>、<code>_expert_routing_tables</code> 集中出现在统计表里的原因。以 <code>fp8.py:784</code> 的 MoE 实现为例：</p>
+
+  <div class="flow">
+    <div class="fn-node"><div class="ft">process_weights_after_loading(layer)</div><div class="fd">静态激活 scale 合并 → w1/w3 分片 scale 合并（第二章的变换）</div></div>
+    <div class="fa"></div>
+    <div class="fn-node hi"><div class="ft">_setup_kernel(layer, w13, w2, scales…) — fp8.py:739</div><div class="fd"><code>convert_to_fp8_moe_kernel_format()</code> 按后端 shuffle 权重<br>→ <code>replace_parameter()</code> ×4 装回<br>→ <code>get_fused_moe_quant_config(layer)</code> 收集最终 scale 配置<br>→ <code>make_fp8_moe_kernel(..., routing_tables=layer._expert_routing_tables())</code></div></div>
+    <div class="fa"></div>
+    <div class="fn-node"><div class="ft">self.moe_kernel 就绪</div><div class="fd">前向时直接调用，不再做任何格式判断</div></div>
+  </div>
+
+  <p>其中 <code>convert_to_*_moe_kernel_format()</code> 是一组<strong>按后端分派的格式转换器</strong>——同一份权重，选到的 kernel 不同，重排就不同：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>转换函数</th><th>作用</th><th>部分后端示例</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>convert_to_fp8_<br>moe_kernel_format</code></td>
+          <td>FP8 MoE 权重格式转换</td>
+          <td>DeepGEMM → pad scale 对齐<br>Marlin → pack FP8 to int32<br>Triton → <strong>无需转换</strong></td>
+        </tr>
+        <tr>
+          <td><code>convert_to_nvfp4_<br>moe_kernel_format</code></td>
+          <td>NvFP4 MoE 权重格式转换</td>
+          <td>FlashInfer CuteDSL → 专用布局<br>Marlin → int32 打包</td>
+        </tr>
+        <tr>
+          <td><code>convert_to_wna16_<br>moe_kernel_format</code></td>
+          <td>INT4/INT8 MoE 权重格式转换</td>
+          <td>Marlin → repack + pad + permute<br>FlashInfer → 对齐变换</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>关键设计：这些函数<strong>不直接安装参数</strong>——它们只返回转换后的张量，由调用者用 <code>replace_parameter()</code> 安装。「格式转换」和「参数注册」职责分离。</p>
+
+  <h3>收尾：两条路径的完整时序</h3>
+  <div class="dia">
+    <canvas class="qv" id="pwal-sequence-canvas" width="720" height="480"></canvas>
+    <div class="dia-cap">左：FP8 路径（简单，4 步）· 右：GPTQ/Marlin 路径（复杂，7 步）——每步标注核心函数</div>
+  </div>
+
+  <div class="co"><strong>一条不变式贯穿全部 145 个实现：</strong>读取参数 → 变换（四类之一）→ <code>replace_parameter</code> 装回。Linear 把后端布局细节委派给 kernel 层的同名方法；MoE 在装回之后再组装 kernel 对象。排行榜上的每个高频函数，都是这条管道某一段的具体实现。</div>
+</section>
+
+
+<section class="section" id="ch4">
+  <div class="sec-lab">第四章</div>
+  <h2 class="sec-t">从打补丁到立契约：weight update 需要怎样的后处理</h2>
+  <p class="sec-l">RL weight update 对权重管道只有两个诉求：<strong>尽可能 eager</strong>——weight_loader 里的 <code>copy_</code> 写入就是终态，最好不需要任何收尾动作；<strong>地址永不变</strong>——CUDA graph 捕获了每个张量的 data_ptr，任何重分配都是静默损坏。但现实是"重载后重跑 pwal"这条路每隔几周就出一个新 bug、打一个新补丁。这一章解释为什么补丁永远打不完，以及用什么代替它。</p>
+
+  <h3>4.1 病根：契约真空</h3>
+  <p>先看 pwal 的<strong>全部显式契约</strong>——base class 上的原文，三行 docstring：</p>
+  <div class="cb"><span class="cm"># quantization/base_config.py:67 — 这就是 pwal 的全部显式契约</span>
+<span class="kw">def</span> <span class="fn">process_weights_after_loading</span>(self, layer: <span class="ty">nn.Module</span>) -&gt; <span class="kw">None</span>:
+    <span class="st">"""Process the weight after loading.</span>
+
+<span class="st">    This can be used for example, to transpose weights for computation.</span>
+<span class="st">    """</span>
+    <span class="kw">return</span></div>
+
+  <p>没有前置条件，没有调用次数限制，没有允许副作用的清单。88 个实现在这片真空里各自演化，沉淀出一套<strong>谁都没写下来、但人人都在依赖的隐式假设</strong>。weight update 把每一条都打破了——而且每一条断裂处，都已经有真实补丁在替它挨打：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>隐式假设</th><th>weight update 打破它</th><th>病症与实证</th></tr></thead>
+      <tbody>
+        <tr><td><strong>只会被调用一次</strong></td><td>finish 时再调一次</td><td>double-transpose（Fp8LinearMethod）、double-fold（TRTLLM NVFP4 clamp/beta）、destructive fusion 累乘。树内散落 <code>_already_called</code> flag（online/fp8 ×5、nvfp4、mxfp4、modelopt），layerwise reload 还要先 <code>delattr</code> 清 flag 再调</td></tr>
+        <tr><td><strong>在 graph capture 之前调</strong></td><td>update 发生在 capture 之后</td><td>参数重绑 → graph 读旧地址。<a href="https://github.com/vllm-project/vllm/pull/52626">#52626</a>：mHC broadcast 每次 rebind 新张量，refit 后 graph 一直读 stale 值。MLA W_UV/W_UK_T、marlin g_idx 各自散补 <code>prefer_copy=True</code></td></tr>
+        <tr><td><strong>可自由重建对象</strong><br>（Parameter / kernel / config）</td><td>编译产物已握着旧对象引用</td><td><a href="https://github.com/vllm-project/vllm/pull/50074">#50074</a>：online NVFP4 每次 reload 重建 moe_kernel，5 次 reload 后 11.1% 非有限输出。<a href="https://github.com/vllm-project/vllm/pull/49695">#49695</a>：TRTLLM kernel 内部派生张量（gemm1_alpha、_g1_alphas…）graph-visible 却被当 rebuild-on-demand scratch——广义修复尝试，已关闭</td></tr>
+        <tr><td><strong>checkpoint 格式此后不再需要</strong></td><td>update 推来的恰恰是 checkpoint 格式</td><td>不可逆 repack（Marlin / AITER shuffle 无逆变换）；per-tensor FP8 转置后 <code>output_dim</code> 标记不更新 → 下次 weight_loader 按旧标记切 TP shard，shape mismatch</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="co rd"><strong>结论：88 个实现全部"合法"。</strong>它们没有违反任何写下来的契约——因为根本没有写下来的契约。每个作者只能在生产环境撞上一种病症之后修补自己的模块：#50074 的作者撞上非有限输出，#52626 的作者撞上 stale broadcast。契约不立，补丁不止——下一个新 quant method 一定会再犯。</div>
+
+  <p>真空之上还有一层<strong>语义混淆</strong>：pwal 名下装着两种本质不同的操作——<strong>格式转换</strong>（同一份数据换排列，只在 checkpoint ≠ kernel 格式时需要）和<strong>派生状态计算</strong>（从权重 X 算出 Y，源一变就要重算）。重跑条件不同的两件事混在一个函数里，"update 后要不要重跑 pwal"这个问题本身就无法回答。</p>
+
+  <h3>4.2 解法：refresh_derived_state——weight-update-native 的契约</h3>
+  <p>不再一个一个打补丁，把补丁们各自摸索出的规则升格为契约。finish 阶段不再"重跑 pwal"，统一走一个新入口 <code>refresh_derived_state</code>，三条条款，每条正对 4.1 表里的一处断裂：</p>
+
+  <div class="cg">
+    <div class="cc"><div class="lb" style="color:var(--green)">条款一</div><div class="vl" style="font-size:20px">In-place</div><div class="dt">所有写入走 <code>copy_</code> / <code>resize_</code>+<code>copy_</code>，data_ptr 不变——在 graph capture 之后调用是安全的</div></div>
+    <div class="cc"><div class="lb" style="color:var(--green)">条款二</div><div class="vl" style="font-size:20px">幂等</div><div class="dt">调用任意次结果一致——<code>_already_called</code> flag 整体退役，destructive 累积不再允许</div></div>
+    <div class="cc"><div class="lb" style="color:var(--green)">条款三</div><div class="vl" style="font-size:20px">增量</div><div class="dt">无格式差的层直接 return——不为不需要转换的层制造风险</div></div>
+  </div>
+
+  <div class="cb"><span class="fn">finish_weight_update</span>()
+    <span class="kw">for</span> module <span class="kw">in</span> model:
+        module.<span class="fn">refresh_derived_state</span>()
+            ├─ 无格式差的层（BF16 dense、Triton/CUTLASS MoE）
+            │      <span class="kw">return</span>                              <span class="cm"># 条款三：eager copy_ 已是终态</span>
+            ├─ 有格式差的层（DeepGEMM / FlashInfer / AITER / Marlin …）
+            │      复用 pwal 的转换代码，以 update 模式执行     <span class="cm"># 条款一</span>
+            │      （prefer_copy 写入，不重建 kernel）
+            └─ 派生状态（W_UK_T/W_UV、norm weights、alphas、mHC broadcast）
+                   从更新后的源权重重算，copy_ 进预分配张量      <span class="cm"># 条款一 + 二</span></div>
+
+  <p>已有补丁全部被契约收编：#52626 的 mHC broadcast 归入"派生状态"分支；#50074 与 unquantized_moe 的 kernel 保持归入"格式转换 + kernel 不重建"分支；散落各处的 <code>_already_called</code> flag 被幂等条款整体取代。pwal 归还给冷启动——它在整个进程生命周期里只跑一次，此后永不再调。</p>
+
+  <h3>4.3 复用而非重写：双模式 pwal 的五条需求</h3>
+  <p>契约不要求重写 88 个实现——格式转换的代码逻辑本身没有错，错的是它的执行方式假设了冷启动。3.4 节看到的 <code>is_weight_update</code> 模式（同一份转换代码、两种执行方式）就是答案的雏形，把它推广成标准需要满足五条：</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th></th><th>需求</th><th>说明</th><th>对应病症</th></tr></thead>
+      <tbody>
+        <tr><td><strong>R1</strong></td><td>模式信号统一</td><td>实现内部可靠区分冷启动 vs update。<code>moe_kernel is not None</code> 是惯例不是契约——dense 方法没有 kernel 对象可查</td><td><code>_already_called</code> flag 乱象</td></tr>
+        <tr><td><strong>R2</strong></td><td>写入 in-place</td><td><code>prefer_copy</code> / <code>resize_</code>+<code>copy_</code>。前提是目标已存在：W_UV/W_UK_T、mHC broadcast 这类派生张量必须在 <code>__init__</code> 预分配，否则首次 prefer_copy 落空</td><td>#52626；MLA/marlin 散补</td></tr>
+        <tr><td><strong>R3</strong></td><td>一次性对象只建一次</td><td>kernel、quant_config、routing tables 在 update 分支跳过</td><td>#50074、#49695</td></tr>
+        <tr><td><strong>R4</strong></td><td>输入必须是 checkpoint 格式</td><td>幂等的前提——不可对已是 kernel 格式的数据二次转换。shape 变化的层需要 restore（<code>resize_</code> 回 checkpoint shape）再装载</td><td>不可逆 repack、dim 标记 mismatch</td></tr>
+        <tr><td><strong>R5</strong></td><td>无 destructive 累积</td><td>scale 融合（<code>weight_scale_2 *= input_scale</code>）改为保留原始值、每次重算，不能在已融合值上累乘</td><td>#49695 的 double-fold</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>4.4 加在哪里：两个表面，三层覆盖</h3>
+  <p>诚实报数——受影响面比"改几个方法"大得多。结构性扫描（#49695 做过一次，本仓库核对过）显示有<strong>两个表面</strong>：</p>
+
+  <p><strong>表面 A：quant_method 层。</strong><code>self.moe_kernel =</code> 赋值出现在 <strong>24 个文件</strong>（fp8、modelopt、mxfp4、moe_wna16、auto_gptq/awq、humming、compressed_tensors ×8、quark、online ×5、inc）——每一个都是"update 时重建 kernel"的潜在病灶，外加各自 pwal 里的参数重绑。</p>
+
+  <p><strong>表面 B：kernel/experts 对象内部的派生张量。</strong>TRTLLM FP8/NVFP4、FlashInfer CUTLASS/B12x、vLLM CUTLASS 等 experts 类在 <code>__init__</code>/pwal 里分配 graph-visible 张量（gemm1_alpha/beta/clamp_limit、_g1_alphas…）。#49695 一语中的："kernel-object tensors are graph-visible state, but the reload path treats them as rebuild-on-demand scratch"。这个表面需要 experts 级的 refresh 接口（#49695 提议的 <code>refresh_after_weight_reload</code>）。</p>
+
+  <p>覆盖策略三层，不是全量铺开：</p>
+  <ul style="max-width:var(--reading);margin-bottom:16px;padding-left:24px">
+    <li style="margin-bottom:8px"><strong>契约 + dispatch（2 个位置）</strong>：quant_method 级能力声明 + experts 级 refresh 接口（默认 no-op）。#49695 的关键教训：<strong>keep-kernel guard 必须是 capability-gated allowlist</strong>，不能盲目 <code>moe_kernel is not None</code>——experts 不实现派生张量 refresh 却保留 kernel，比重建更糟（stale state 且没有重建来兜底）</li>
+    <li style="margin-bottom:8px"><strong>双模式改造（v1 约 10–12 个 method 类 + 4–6 个 experts 类）</strong>：范围由 RL 框架格式审计决定——veRL/OpenRLHF 发 BF16、Miles 发 FP8 预量化 + INT4 推理侧量化、NeMo-RL 有 QARL 流程。落到实现上：unquantized、Fp8 dense/MoE、wNa16/Marlin INT4（Miles 场景，SGLang 已为此打过 resize_+copy_ 补丁）、TRTLLM 系 experts refresh、MLA 预分配；online 系列归 v2</li>
+    <li style="margin-bottom:8px"><strong>长尾零改动（fail-closed）</strong>：不预测"哪些格式永远不会被 update"——未声明能力的组合（GGUF、HQQ、BitNet…）在 start 就被拒绝，而不是默默跑冷启动语义然后静默损坏。契约因此可以增量推进，不需要一夜改完 24+ 个文件</li>
+  </ul>
+
+  <h3>4.5 全量普查：88 个实现落进三个分支</h3>
+  <p>每一层在 finish 时走 dispatch 树的哪个分支，由 quant_method + kernel backend 的组合决定——<code>create_weights()</code> 时已经确定，不需要任何运行时探测。契约不是空架子：把 88 个量化层实现和挂载点 ② ③ ④ 全部按分支归类，每个分支的人口、代表和 finish 动作如下。</p>
+
+  <h4 style="font-size:16px;font-weight:700;margin:28px 0 10px">分支一 return：约 40 个实现 + 无格式差的 backend 组合</h4>
+  <p>普查里最大的群体是<strong>纯委派 / noop</strong>——只做 <code>self.kernel.process_weights_after_loading(layer)</code> 或干脆 <code>pass</code>，不碰权重数据。再加上"有转换代码、但对当前 backend 恰好是 no-op"的组合（block FP8 + Triton/VLLM_CUTLASS、BF16 dense）。这些层 weight_loader 的 <code>copy_</code> 就是终态，finish 零动作——RL 最常见的 BF16 / Triton 路径整条落在这里，这正是"尽可能 eager"的落点。</p>
+
+  <h4 style="font-size:16px;font-weight:700;margin:28px 0 10px">分支二 格式转换：约 35 个改布局/shape 的实现</h4>
+  <p>冷启动把 checkpoint 格式翻成 kernel 格式的群体——第二章的四类变换全部集中在这里，也是 181 个 <code>replace_parameter</code> 调用的主要来源。代表实现与 update 模式下的写入方式：</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>代表实现</th><th>冷启动做什么</th><th>shape 变？</th><th>update 模式写入</th></tr></thead>
+      <tbody>
+        <tr><td><code>Fp8LinearMethod</code>（per-tensor）</td><td>weight <code>.t()</code> + scale requantize</td><td>变：[N,K]→[K,N]</td><td>restore → 装载 → 转换</td></tr>
+        <tr><td><code>Fp8MoEMethod</code></td><td><code>convert_to_fp8_moe_kernel_format</code> 按 backend shuffle</td><td>视 backend（TRTLLM 3D→4D 变；DEEPGEMM scale 变）</td><td><code>prefer_copy</code> / restore + <code>resize_</code>+<code>copy_</code></td></tr>
+        <tr><td><code>MoeWNA16Method</code></td><td>Marlin INT4 repack</td><td>变</td><td>restore（<code>resize_</code>）→ 装载 → 转换</td></tr>
+        <tr><td><code>Mxfp4MoEMethod</code></td><td>MXFP4 repack</td><td>变</td><td>同上</td></tr>
+        <tr><td><code>AutoAWQMarlinLinearMethod</code></td><td>bit reorder + axis transpose</td><td>变</td><td>同上</td></tr>
+        <tr><td><code>ModelOptNvFp4FusedMoE</code></td><td>NVFP4 repack</td><td>变</td><td>同上</td></tr>
+        <tr><td><code>HummingLinearMethod</code></td><td>pad N→256、K→128</td><td>变</td><td>同上</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="co am"><strong>为什么这个分支救不回 eager：</strong>转换操作的是<strong>整个 fused tensor</strong>——<code>w13_weight</code> 里装着全部 expert 的 w1+w3。部分 expert 到达就转换，未更新的 expert 会被二次 shuffle，静默损坏。格式转换天生是"所有权重到齐之后"的操作。这就是"尽可能 eager"的硬边界，也是 finish 阶段存在的根本理由。</div>
+
+  <p>13 个<strong>在线量化</strong>实现（<code>online/</code> 目录，冷启动 BF16→FP8/NVFP4/INT8/MXFP8）也落在这个分支：它们的"格式差"是 dtype 本身。v1 fail-closed 拒绝；v2 把量化前移进 weight_loader 包装（Humming 模式）之后，它们整体迁出 finish、变成 eager。</p>
+
+  <h4 style="font-size:16px;font-weight:700;margin:28px 0 10px">分支三 派生状态：约 5 个 derived-only 实现 + 挂载点 ② ③ ④ 全部</h4>
+  <p>从权重 X 算出张量 Y 的群体。挂载点 ① 里的少数派（<code>BaseKVCacheMethod</code> 的 scale 拷贝、<code>ModelOptNvFp4Linear</code> 的 <code>alpha = input_gs × weight_gs</code>），加上挂载点 ② ③ ④ 的全部。完整清单：</p>
+  <div class="tw">
+    <table>
+      <thead><tr><th>派生张量</th><th>源</th><th>计算</th><th>场景</th><th>位置</th></tr></thead>
+      <tbody>
+        <tr><td><code>W_UK_T</code></td><td><code>kv_b_proj.weight</code></td><td>split → <code>permute(1,2,0)</code></td><td>DeepSeek V2/V3/R1、Kimi K3</td><td><code>mla_attention.py:1118</code></td></tr>
+        <tr><td><code>W_UV</code></td><td><code>kv_b_proj.weight</code></td><td>split → <code>transpose(0,1)</code></td><td>同上</td><td><code>mla_attention.py:1116</code></td></tr>
+        <tr><td><code>W_K</code> + <code>W_K_scale</code></td><td><code>kv_b_proj.weight</code></td><td>split → MXFP4 量化 → transpose</td><td>MLA + AMD aiter MXFP4</td><td><code>mla_attention.py:1065</code></td></tr>
+        <tr><td><code>W_K</code> + <code>W_K_scale</code></td><td><code>kv_b_proj.weight</code></td><td>split → FP8 dynamic quant → transpose</td><td>MLA + AMD aiter FP8</td><td><code>mla_attention.py:1076</code></td></tr>
+        <tr><td><code>W_UK_T_dcp_qrep</code></td><td><code>W_UK_T</code></td><td><code>all_gather(dim=0)</code></td><td>MLA + DCP q replicate</td><td><code>mla_attention.py:1120</code></td></tr>
+        <tr><td><code>_g1_alphas</code></td><td><code>w1_scale × a1_scale</code></td><td><code>(w1_scale * a1_scale).squeeze()</code></td><td>per-tensor FP8 MoE（TRT-LLM）</td><td><code>trtllm_fp8_moe.py:311</code></td></tr>
+        <tr><td><code>qnorm/knorm_weight</code></td><td>fallback norm <code>.weight</code></td><td>float32 <code>copy_</code></td><td>HPC RopeNorm（挂载点 ③）</td><td><code>hpc/rope_norm.py:227</code></td></tr>
+        <tr><td><code>hc_attn_fn_broadcast</code></td><td><code>hc_attn_fn</code></td><td><code>view → sum(dim=1)</code></td><td>DS4 mHC（#52626 修复对象，挂载点 ④ 类）</td><td><code>deepseek_v4/nvidia/model.py</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="co"><strong>两个刷新细节：</strong>MLA 派生有 <strong>3 条路径</strong>（BF16 / MXFP4 / FP8），refresh 按当前 backend 走对应路径——现有 <code>_derive_absorbed_attention</code> 代码直接复用。派生链可以有<strong>两级</strong>：<code>W_UK_T_dcp_qrep</code> 派生自 <code>W_UK_T</code>，刷新必须按依赖顺序执行——这正是冷启动挂载点 ①→②→③→④ 顺序约束在 finish 侧的对应物。</div>
+
+</section>
+
+
+<footer>
+  <span>权重定稿管道 · process_weights_after_loading</span>
+  <span>代码引用核对于 <span style="color:var(--copper)">2026-07 main</span></span>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  var RD = [];
+
+// ── orchestration-canvas ──
+RD.push(function(){
+  var c = document.getElementById('orchestration-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 720, H = 520;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var v = function(n, d){ return cs.getPropertyValue(n).trim() || d; };
+  var blue = v('--blue','#2563eb'), green = v('--green','#059669'), red = v('--red','#dc2626'),
+      ink2 = v('--ink-2','#4a483f'), ink3 = v('--ink-3','#7a786e'),
+      ink4 = v('--ink-4','#b0ae9f'), rule = v('--rule','#e4e1d6'), surf = v('--surface','#fff'),
+      surfDim = v('--surface-dim','#f3f0e8'), mono = v('--mono','monospace'), sans = v('--sans','sans-serif');
+
+  function box(x,y,w,h,border,fill,lw){
+    ctx.fillStyle = fill; ctx.beginPath(); ctx.roundRect(x,y,w,h,7); ctx.fill();
+    ctx.strokeStyle = border; ctx.lineWidth = lw||1.5;
+    ctx.beginPath(); ctx.roundRect(x,y,w,h,7); ctx.stroke();
+  }
+  function txt(s,x,y,font,color,align){
+    ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align||'center'; ctx.fillText(s,x,y);
+  }
+  function arrowV(x,y1,y2,color){
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(x,y1); ctx.lineTo(x,y2-6); ctx.stroke();
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(x,y2); ctx.lineTo(x-5,y2-8); ctx.lineTo(x+5,y2-8); ctx.closePath(); ctx.fill();
+  }
+
+  var cx = 302; // main column center
+
+  // Entry
+  box(cx-170, 10, 340, 40, rule, surf);
+  txt('load_model() — 权重加载完成', cx, 30, '600 13px '+mono, ink2);
+  txt('BaseModelLoader', cx, 44, '10.5px '+sans, ink4);
+  arrowV(cx, 50, 74, blue);
+
+  // Title
+  txt('process_weights_after_loading(model)', cx, 92, '700 14px '+mono, blue);
+  txt('model_loader/utils.py:100', cx, 108, '11px '+mono, ink4);
+  arrowV(cx, 114, 132, blue);
+
+  // ── Phase 1 ──
+  var p1y = 132, p1h = 168;
+  box(24, p1y, 556, p1h, blue, surf, 2);
+  ctx.font = 'bold 9px '+mono;
+  ctx.fillStyle = blue + '22'; ctx.beginPath(); ctx.roundRect(38, p1y+12, 58, 20, 4); ctx.fill();
+  txt('阶段 ①', 67, p1y+26, 'bold 11px '+sans, blue);
+  txt('量化层循环', 104, p1y+27, '700 14px '+sans, ink2, 'left');
+  txt('for module in named_modules() if isinstance(quant_method, QuantizeMethodBase)', 38, p1y+48, '11px '+mono, ink3, 'left');
+
+  var sy = p1y+62, sw = 164, sh = 62, gap = 12, sx0 = 38;
+  var steps = [
+    ['device_loading_context','CPU→GPU 搬运','进出成对搬运', rule, surf],
+    ['quant_method.pwal(layer)','格式翻译','→ 12.2 逐层管道', blue, v('--blue-wash','rgba(37,99,235,.06)')],
+    ['release_device_memory','显存回收','repack 中间量及时归还', rule, surf]
+  ];
+  for (var i=0;i<3;i++){
+    var sx = sx0 + i*(sw+gap);
+    box(sx, sy, sw, sh, steps[i][3], steps[i][4], steps[i][3]===blue?2:1.2);
+    txt(steps[i][0], sx+sw/2, sy+18, '600 10.5px '+mono, steps[i][3]===blue?blue:ink2);
+    txt(steps[i][1], sx+sw/2, sy+34, '11px '+sans, ink3);
+    txt(steps[i][2], sx+sw/2, sy+49, '10px '+sans, ink4);
+    if (i<2){
+      ctx.strokeStyle = ink4; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(sx+sw+1, sy+sh/2); ctx.lineTo(sx+sw+gap-4, sy+sh/2); ctx.stroke();
+      ctx.fillStyle = ink4; ctx.beginPath();
+      ctx.moveTo(sx+sw+gap-1, sy+sh/2); ctx.lineTo(sx+sw+gap-7, sy+sh/2-4); ctx.lineTo(sx+sw+gap-7, sy+sh/2+4); ctx.closePath(); ctx.fill();
+    }
+  }
+  // loop arrow
+  ctx.strokeStyle = ink4; ctx.lineWidth = 1.2; ctx.setLineDash([4,3]);
+  ctx.beginPath();
+  ctx.moveTo(sx0+2*(sw+gap)+sw/2, sy+sh+4);
+  ctx.lineTo(sx0+2*(sw+gap)+sw/2, sy+sh+16);
+  ctx.lineTo(sx0+sw/2, sy+sh+16);
+  ctx.lineTo(sx0+sw/2, sy+sh+6);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = ink4; ctx.beginPath();
+  ctx.moveTo(sx0+sw/2, sy+sh+2); ctx.lineTo(sx0+sw/2-4, sy+sh+9); ctx.lineTo(sx0+sw/2+4, sy+sh+9); ctx.closePath(); ctx.fill();
+  txt('逐层重复', cx, sy+sh+14, '10.5px '+sans, ink4);
+
+  arrowV(cx, p1y+p1h, p1y+p1h+26, blue);
+  txt('顺序固定', cx+40, p1y+p1h+18, '10.5px '+sans, ink4, 'left');
+
+  // ── Phase 2 ──
+  var p2y = p1y+p1h+26, p2h = 138;
+  box(24, p2y, 556, p2h, green, surf, 2);
+  ctx.fillStyle = green + '22'; ctx.beginPath(); ctx.roundRect(38, p2y+12, 58, 20, 4); ctx.fill();
+  txt('阶段 ②', 67, p2y+26, 'bold 11px '+sans, green);
+  txt('Attention 系循环', 104, p2y+27, '700 14px '+sans, ink2, 'left');
+  txt('"Happens after other modules so we can easily decompress weights"', 38, p2y+48, 'italic 10.5px '+mono, ink4, 'left');
+
+  var ay = p2y+60, aw = 252, ah = 62;
+  box(38, ay, aw, ah, rule, surf, 1.2);
+  txt('Attention — KV scale 定稿', 38+aw/2, ay+18, '600 11px '+mono, ink2);
+  txt('impl.pwal(act_dtype)', 38+aw/2, ay+34, '10.5px '+mono, ink3);
+  txt('缺 q/k/v/prob scale 时默认 1.0', 38+aw/2, ay+49, '10px '+sans, ink4);
+
+  var mx = 38+aw+14;
+  box(mx, ay, aw, ah, green, green+'14', 2);
+  txt('MLAAttention — 权重吸收', mx+aw/2, ay+18, '600 11px '+mono, green);
+  txt('dequant(kv_b_proj) → W_UK / W_UV', mx+aw/2, ay+34, '10.5px '+mono, ink3);
+  txt('平台支持时再重量化 FP8/MXFP4', mx+aw/2, ay+49, '10px '+sans, ink4);
+
+  // dependency arrow: phase1 highlighted step → MLA box, via right lane
+  var depX = 636;
+  ctx.strokeStyle = red; ctx.lineWidth = 1.8; ctx.setLineDash([6,4]);
+  ctx.beginPath();
+  ctx.moveTo(sx0+(sw+gap)+sw, sy+sh/2);       // right edge of highlighted step
+  ctx.lineTo(depX, sy+sh/2);
+  ctx.lineTo(depX, ay+ah/2);
+  ctx.lineTo(mx+aw+4, ay+ah/2);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = red; ctx.beginPath();
+  ctx.moveTo(mx+aw, ay+ah/2); ctx.lineTo(mx+aw+8, ay+ah/2-5); ctx.lineTo(mx+aw+8, ay+ah/2+5); ctx.closePath(); ctx.fill();
+  ctx.save();
+  ctx.translate(depX+14, (sy+sh/2 + ay+ah/2)/2); ctx.rotate(Math.PI/2);
+  txt('硬依赖：kv_b_proj 已完成阶段 ①', 0, 0, '600 10.5px '+sans, red);
+  ctx.restore();
+
+  arrowV(cx, p2y+p2h, p2y+p2h+28, blue);
+  txt('推理就绪 — 权重全部为 kernel 格式', cx, p2y+p2h+46, '600 12px '+sans, ink2);
+});
+
+  // ── scale-merge-canvas ──
+RD.push(function(){
+  var c = document.getElementById('scale-merge-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 680, H = 180;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var blue = cs.getPropertyValue('--blue').trim() || '#2563eb';
+  var green = cs.getPropertyValue('--green').trim() || '#059669';
+  var amber = cs.getPropertyValue('--amber').trim() || '#d97706';
+  var red = cs.getPropertyValue('--red').trim() || '#dc2626';
+  var ink = cs.getPropertyValue('--ink').trim() || '#1c1b18';
+  var ink2 = cs.getPropertyValue('--ink-2').trim() || '#4a483f';
+  var ink3 = cs.getPropertyValue('--ink-3').trim() || '#7a786e';
+  var ink4 = cs.getPropertyValue('--ink-4').trim() || '#b0ae9f';
+  var rule = cs.getPropertyValue('--rule').trim() || '#e4e1d6';
+  var mono = cs.getPropertyValue('--mono').trim() || 'monospace';
+  var sans = cs.getPropertyValue('--sans').trim() || 'sans-serif';
+
+  // Three shard boxes
+  var bw = 120, bh = 60, gap = 16, topY = 20;
+  var startX = 40;
+  var shards = [
+    { label: 'Q', scale: 's_q = 0.8', color: blue },
+    { label: 'K', scale: 's_k = 0.5', color: green },
+    { label: 'V', scale: 's_v = 1.2', color: amber }
+  ];
+  shards.forEach(function(s, i) {
+    var x = startX + i * (bw + gap);
+    ctx.fillStyle = s.color + '18'; ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x, topY, bw, bh, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = s.color; ctx.font = 'bold 14px ' + mono; ctx.textAlign = 'center';
+    ctx.fillText(s.label, x + bw / 2, topY + 24);
+    ctx.fillStyle = ink3; ctx.font = '12px ' + mono;
+    ctx.fillText(s.scale, x + bw / 2, topY + 44);
+  });
+
+  // Arrow
+  var ax = startX + 3 * bw + 3 * gap + 10;
+  ctx.strokeStyle = ink4; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(ax, topY + bh / 2); ctx.lineTo(ax + 40, topY + bh / 2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ax + 40, topY + bh / 2); ctx.lineTo(ax + 34, topY + bh / 2 - 4); ctx.lineTo(ax + 34, topY + bh / 2 + 4); ctx.closePath(); ctx.fillStyle = ink4; ctx.fill();
+
+  // "max" label
+  ctx.fillStyle = red; ctx.font = 'bold 12px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('max()', ax + 20, topY + bh / 2 - 10);
+
+  // Merged box
+  var mx = ax + 55;
+  ctx.fillStyle = red + '18'; ctx.strokeStyle = red; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(mx, topY, bw + 40, bh, 6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = red; ctx.font = 'bold 14px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('QKV (fused)', mx + (bw + 40) / 2, topY + 24);
+  ctx.fillStyle = ink3; ctx.font = '12px ' + mono;
+  ctx.fillText('s = 1.2 (max)', mx + (bw + 40) / 2, topY + 44);
+
+  // Bottom note
+  ctx.fillStyle = ink3; ctx.font = '12px ' + sans; ctx.textAlign = 'left';
+  ctx.fillText('Q 和 K 分片用 s=1.2 重新量化 (dequant → requant)', startX, topY + bh + 36);
+  ctx.fillText('→ 全部数据基于同一个 scale，scaled_mm 才能正确计算', startX, topY + bh + 56);
+});
+
+  // ── transpose-canvas ──
+RD.push(function(){
+  var c = document.getElementById('transpose-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 680, H = 200;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var blue = cs.getPropertyValue('--blue').trim() || '#2563eb';
+  var green = cs.getPropertyValue('--green').trim() || '#059669';
+  var ink = cs.getPropertyValue('--ink').trim() || '#1c1b18';
+  var ink2 = cs.getPropertyValue('--ink-2').trim() || '#4a483f';
+  var ink3 = cs.getPropertyValue('--ink-3').trim() || '#7a786e';
+  var ink4 = cs.getPropertyValue('--ink-4').trim() || '#b0ae9f';
+  var rule = cs.getPropertyValue('--rule').trim() || '#e4e1d6';
+  var surfDim = cs.getPropertyValue('--surface-dim').trim() || '#f3f0e8';
+  var mono = cs.getPropertyValue('--mono').trim() || 'monospace';
+  var sans = cs.getPropertyValue('--sans').trim() || 'sans-serif';
+
+  var vals = [
+    ['a','b','c','d'],
+    ['e','f','g','h'],
+    ['i','j','k','l']
+  ];
+  var cw = 36, ch = 32, pad = 1;
+
+  // Draw matrix helper
+  function drawMat(ox, oy, data, rows, cols, highlightDiag) {
+    var hues = ['rgba(37,99,235,.12)','rgba(5,150,105,.12)','rgba(217,119,6,.12)','rgba(124,58,237,.12)'];
+    for (var r = 0; r < rows; r++) {
+      for (var c2 = 0; c2 < cols; c2++) {
+        var x = ox + c2 * (cw + pad), y = oy + r * (ch + pad);
+        ctx.fillStyle = highlightDiag ? hues[r % 4] : hues[c2 % 4];
+        ctx.fillRect(x, y, cw, ch);
+        ctx.fillStyle = ink2; ctx.font = '13px ' + mono; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(data[r][c2], x + cw / 2, y + ch / 2);
+      }
+    }
+    ctx.strokeStyle = rule; ctx.lineWidth = 1;
+    ctx.strokeRect(ox, oy, cols * (cw + pad) - pad, rows * (ch + pad) - pad);
+  }
+
+  // Original [3, 4] = [N, K]
+  var ox1 = 60, oy = 40;
+  ctx.fillStyle = ink3; ctx.font = '12px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('Checkpoint: [N=3, K=4]', ox1 + 2 * cw, oy - 14);
+  drawMat(ox1, oy, vals, 3, 4, true);
+
+  // Arrow
+  var ax = ox1 + 4 * (cw + pad) + 30;
+  ctx.fillStyle = blue; ctx.font = 'bold 14px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('.t()', ax + 25, oy + 1.5 * ch - 12);
+  ctx.strokeStyle = blue; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(ax, oy + 1.5 * ch); ctx.lineTo(ax + 50, oy + 1.5 * ch); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(ax + 50, oy + 1.5 * ch); ctx.lineTo(ax + 44, oy + 1.5 * ch - 4); ctx.lineTo(ax + 44, oy + 1.5 * ch + 4); ctx.closePath(); ctx.fill();
+
+  // Transposed [4, 3] = [K, N]
+  var transVals = [['a','e','i'],['b','f','j'],['c','g','k'],['d','h','l']];
+  var ox2 = ax + 65;
+  ctx.fillStyle = ink3; ctx.font = '12px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('CUTLASS: [K=4, N=3]', ox2 + 1.5 * cw, oy - 14);
+  drawMat(ox2, oy, transVals, 4, 3, false);
+
+  // Bottom labels
+  ctx.fillStyle = ink3; ctx.font = '12px ' + sans; ctx.textAlign = 'left';
+  ctx.fillText('行变列，列变行 —— 每个数值不变，只是位置移动了', 60, oy + 4 * (ch + pad) + 20);
+  ctx.fillText('原来第 0 行 [a b c d] 变成了第 0 列 [a b c d]ᵀ', 60, oy + 4 * (ch + pad) + 40);
+});
+
+  // ── repack-canvas ──
+RD.push(function(){
+  var c = document.getElementById('repack-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 680, H = 340;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var blue = cs.getPropertyValue('--blue').trim() || '#2563eb';
+  var green = cs.getPropertyValue('--green').trim() || '#059669';
+  var amber = cs.getPropertyValue('--amber').trim() || '#d97706';
+  var red = cs.getPropertyValue('--red').trim() || '#dc2626';
+  var violet = cs.getPropertyValue('--violet').trim() || '#7c3aed';
+  var ink2 = cs.getPropertyValue('--ink-2').trim() || '#4a483f';
+  var ink3 = cs.getPropertyValue('--ink-3').trim() || '#7a786e';
+  var ink4 = cs.getPropertyValue('--ink-4').trim() || '#b0ae9f';
+  var rule = cs.getPropertyValue('--rule').trim() || '#e4e1d6';
+  var mono = cs.getPropertyValue('--mono').trim() || 'monospace';
+  var sans = cs.getPropertyValue('--sans').trim() || 'sans-serif';
+
+  var vals = ['a','b','c','d','e','f','g','h'];
+  var colors = [blue, green, amber, red, violet, blue, green, amber];
+  var bw = 60, bh = 36, pad = 2;
+  var ox = 60;
+
+  function drawRow(oy, order, label, labelColor, showBits) {
+    // Label above
+    ctx.fillStyle = labelColor; ctx.font = 'bold 14px ' + mono; ctx.textAlign = 'left';
+    ctx.fillText(label, ox, oy - 8);
+    // Container
+    ctx.strokeStyle = rule; ctx.lineWidth = 1;
+    ctx.strokeRect(ox, oy, 8 * (bw + pad) - pad, bh);
+    // Cells
+    for (var i = 0; i < 8; i++) {
+      var x = ox + i * (bw + pad);
+      var vi = order[i];
+      ctx.fillStyle = colors[vi] + '20';
+      ctx.fillRect(x + 0.5, oy + 0.5, bw - 1, bh - 1);
+      // Value letter
+      ctx.fillStyle = colors[vi]; ctx.font = 'bold 16px ' + mono;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(vals[vi], x + bw / 2, oy + bh / 2 - (showBits ? 4 : 0));
+      // Bit range below value
+      if (showBits) {
+        ctx.fillStyle = ink4; ctx.font = '9px ' + mono;
+        ctx.fillText('bit ' + (i * 4) + '-' + (i * 4 + 3), x + bw / 2, oy + bh / 2 + 12);
+      }
+    }
+  }
+
+  // AWQ row
+  var y1 = 30;
+  drawRow(y1, [0,2,4,6,1,3,5,7], 'AWQ 打包（交错排列）:', amber, true);
+
+  // Arrow between rows
+  var arrowTop = y1 + bh + 14;
+  ctx.fillStyle = red; ctx.font = 'bold 12px ' + mono; ctx.textAlign = 'center';
+  ctx.fillText('_convert_awq_to_standard_format()', W / 2, arrowTop + 8);
+  // Vertical arrow
+  ctx.strokeStyle = red; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(W / 2, arrowTop + 16); ctx.lineTo(W / 2, arrowTop + 40); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(W / 2, arrowTop + 40);
+  ctx.lineTo(W / 2 - 5, arrowTop + 33);
+  ctx.lineTo(W / 2 + 5, arrowTop + 33);
+  ctx.closePath(); ctx.fillStyle = red; ctx.fill();
+
+  // GPTQ/Marlin row
+  var y2 = arrowTop + 66;
+  drawRow(y2, [0,1,2,3,4,5,6,7], 'GPTQ/Marlin 打包（顺序排列）:', blue, true);
+
+  // Explanation text
+  var ty = y2 + bh + 24;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = ink3; ctx.font = '13px ' + sans; ctx.textAlign = 'left';
+  ctx.fillText('同一个 int32，同样 8 个 INT4 值 —— 但 bit 位置完全不同：', ox, ty);
+  ctx.fillStyle = amber; ctx.fillText('AWQ', ox, ty + 24);
+  ctx.fillStyle = ink3; ctx.fillText(': a 在 bit 0-3, b 在 bit 16-19（偶数先放，奇数后放）', ox + 32, ty + 24);
+  ctx.fillStyle = blue; ctx.fillText('Marlin', ox, ty + 46);
+  ctx.fillStyle = ink3; ctx.fillText(': a 在 bit 0-3, b 在 bit 4-7（按顺序依次排放）', ox + 44, ty + 46);
+  ctx.fillStyle = red; ctx.fillText('不转换 → kernel 从 bit 4-7 读出 c 而不是 b → 输出全错', ox, ty + 70);
+});
+
+  // ── reload-timeline-canvas ──
+RD.push(function(){
+  var c = document.getElementById('reload-timeline-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 720, H = 470;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var v = function(n, d){ return cs.getPropertyValue(n).trim() || d; };
+  var blue = v('--blue','#2563eb'), green = v('--green','#059669'), red = v('--red','#dc2626'),
+      amber = v('--amber','#d97706'), ink2 = v('--ink-2','#4a483f'), ink3 = v('--ink-3','#7a786e'),
+      ink4 = v('--ink-4','#b0ae9f'), rule = v('--rule','#e4e1d6'), surf = v('--surface','#fff'),
+      mono = v('--mono','monospace'), sans = v('--sans','sans-serif');
+
+  function txt(s,x,y,font,color,align){
+    ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align||'center'; ctx.fillText(s,x,y);
+  }
+  function ev(x,y,label,sub,hi,hiColor){
+    // dot
+    ctx.fillStyle = hi ? hiColor : ink4;
+    ctx.beginPath(); ctx.arc(x, y, hi?6:4, 0, Math.PI*2); ctx.fill();
+    if (hi){ ctx.strokeStyle = surf; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x,y,6,0,Math.PI*2); ctx.stroke(); }
+    // label box to the right
+    var bw = 218, bh = sub? 40:26, bx = x+16, by = y-bh/2;
+    ctx.fillStyle = surf; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,5); ctx.fill();
+    ctx.strokeStyle = hi ? hiColor : rule; ctx.lineWidth = hi?1.8:1;
+    ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,5); ctx.stroke();
+    txt(label, bx+10, by+17, '600 11px '+mono, hi?hiColor:ink2, 'left');
+    if (sub) txt(sub, bx+10, by+32, '10px '+sans, ink3, 'left');
+  }
+
+  var lx = 74, rx = 434;   // timeline x for left/right columns
+  var t0 = 74, t1 = 430;   // timeline y range
+
+  // Headers
+  txt('首次加载', lx+110, 32, '700 15px '+sans, ink2);
+  txt('RL 权重更新（重载）', rx+110, 32, '700 15px '+sans, ink2);
+  txt('时间 ↓', 24, 52, '10.5px '+sans, ink4, 'left');
+
+  // divider
+  ctx.strokeStyle = rule; ctx.lineWidth = 1; ctx.setLineDash([2,4]);
+  ctx.beginPath(); ctx.moveTo(360, 24); ctx.lineTo(360, 448); ctx.stroke(); ctx.setLineDash([]);
+
+  // ── red "address referenced" bands (behind timelines) ──
+  // left: from capture (y=330) down
+  ctx.fillStyle = red + '14';
+  ctx.beginPath(); ctx.roundRect(lx-18, 330, 292, t1-330+8, 6); ctx.fill();
+  // right: full range
+  ctx.beginPath(); ctx.roundRect(rx-18, t0-10, 292, t1-t0+18, 6); ctx.fill();
+  ctx.strokeStyle = red + '55'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(lx-18, 330, 292, t1-330+8, 6); ctx.stroke();
+  ctx.beginPath(); ctx.roundRect(rx-18, t0-10, 292, t1-t0+18, 6); ctx.stroke();
+  txt('地址被 CUDA Graph / kernel 对象引用', rx+128, t0+4, '600 10px '+sans, red);
+
+  // timelines
+  ctx.strokeStyle = ink4; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(lx, t0); ctx.lineTo(lx, t1); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(rx, t0); ctx.lineTo(rx, t1); ctx.stroke();
+
+  // left events
+  ev(lx, 96,  'create_weights()', 'checkpoint 布局占位', false);
+  ev(lx, 152, 'load_weights()', '磁盘 → GPU', false);
+  ev(lx, 218, 'pwal → rebind 新张量', '旧地址无人引用，随便换 ✓', true, green);
+  ev(lx, 296, 'CUDA Graph capture', '地址从这里开始被记录', true, red);
+  ev(lx, 396, '推理 serving', 'graph 重放访问捕获的地址', false);
+
+  // right events
+  ev(rx, 116, '训练侧推来新权重', 'update_weights / reload', false);
+  ev(rx, 182, 'load_weights() 重灌', 'weight_loader 复用（14.2 的保证）', false);
+  ev(rx, 262, 'pwal 再次运行', '必须 copy_ 原地：graph 还握着旧地址', true, amber);
+  ev(rx, 344, '继续 serving', '地址没变，graph 重放安全 ✓', false);
+
+  // code note bottom right
+  ctx.fillStyle = v('--surface-dim','#f3f0e8');
+  ctx.beginPath(); ctx.roundRect(rx-2, 408, 268, 34, 5); ctx.fill();
+  txt('prefer_copy = is_weight_update', rx+132, 423, '600 11px '+mono, blue);
+  txt('unquantized_fused_moe_method.py:176', rx+132, 437, '9.5px '+mono, ink4);
+});
+
+  // ── aliasing-canvas ──
+RD.push(function(){
+  var c = document.getElementById('aliasing-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 680, H = 330;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var v = function(n, d){ return cs.getPropertyValue(n).trim() || d; };
+  var blue = v('--blue','#2563eb'), red = v('--red','#dc2626'), green = v('--green','#059669'),
+      ink2 = v('--ink-2','#4a483f'), ink3 = v('--ink-3','#7a786e'), ink4 = v('--ink-4','#b0ae9f'),
+      rule = v('--rule','#e4e1d6'), surf = v('--surface','#fff'),
+      mono = v('--mono','monospace'), sans = v('--sans','sans-serif');
+
+  function txt(s,x,y,font,color,align){
+    ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align||'center'; ctx.fillText(s,x,y);
+  }
+  var letters = ['a','b','c','d','e','f','g','h','i'];
+
+  function grid(x0, y0, cell, order, title, sub, hiSet){
+    txt(title, x0+cell*1.5, y0-22, '600 12px '+mono, ink2);
+    txt(sub, x0+cell*1.5, y0-8, '10px '+mono, ink4);
+    for (var r=0;r<3;r++) for (var col=0;col<3;col++){
+      var idx = order[r*3+col];
+      var x = x0+col*cell, y = y0+r*cell;
+      var hot = hiSet && hiSet.indexOf(idx)>=0;
+      ctx.fillStyle = hot ? red+'22' : surf;
+      ctx.strokeStyle = hot ? red : rule; ctx.lineWidth = hot?1.8:1;
+      ctx.beginPath(); ctx.roundRect(x,y,cell-3,cell-3,4); ctx.fill(); ctx.stroke();
+      txt(letters[idx], x+(cell-3)/2, y+cell/2+3, '600 13px '+mono, hot?red:ink2);
+    }
+  }
+
+  // weight view (row-major a..i) and transposed view — highlight the b/d swap pair
+  grid(96, 44, 34, [0,1,2,3,4,5,6,7,8], 'weight（视图 A）', 'stride=(3,1)', [1,3]);
+  grid(430, 44, 34, [0,3,6,1,4,7,2,5,8], 'weight.t()（视图 B）', 'stride=(1,3)', [1,3]);
+
+  // storage strip
+  var stY = 196, stX = 130, cw = 46;
+  txt('同一块 storage（9 个元素）', 340, stY-10, '600 11px '+sans, ink3);
+  for (var i=0;i<9;i++){
+    var hot = (i===1||i===3);
+    ctx.fillStyle = hot ? red+'22' : v('--surface-dim','#f3f0e8');
+    ctx.strokeStyle = hot ? red : rule; ctx.lineWidth = hot?1.8:1;
+    ctx.beginPath(); ctx.roundRect(stX+i*cw, stY, cw-4, 34, 4); ctx.fill(); ctx.stroke();
+    txt(letters[i], stX+i*cw+(cw-4)/2, stY+22, '600 12px '+mono, hot?red:ink2);
+    txt(''+i, stX+i*cw+(cw-4)/2, stY+48, '9px '+mono, ink4);
+  }
+  // both views point at storage
+  ctx.strokeStyle = ink4; ctx.lineWidth = 1.2; ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.moveTo(147, 148); ctx.lineTo(200, stY-16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(481, 148); ctx.lineTo(480, stY-16); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // copy_ sequence annotation
+  var yy = 272;
+  txt('weight.copy_(weight.t()) 逐元素执行：', 24, yy, '600 11.5px '+mono, ink2, 'left');
+  // step 1: write d into position 1
+  ctx.strokeStyle = red; ctx.lineWidth = 2;
+  var x_d = stX+3*cw+(cw-4)/2, x_b = stX+1*cw+(cw-4)/2;
+  ctx.beginPath(); ctx.moveTo(x_d, stY+38); ctx.bezierCurveTo(x_d, stY+72, x_b, stY+72, x_b+6, stY+40); ctx.stroke();
+  ctx.fillStyle = red; ctx.beginPath();
+  ctx.moveTo(x_b+4, stY+36); ctx.lineTo(x_b-2, stY+48); ctx.lineTo(x_b+11, stY+46); ctx.closePath(); ctx.fill();
+  txt('① dst[0][1] ← src[0][1]：把 d 写进位置 1，b 被覆盖', 24, yy+20, '11px '+sans, red, 'left');
+  txt('② 轮到 dst[1][0] ← src[1][0] = storage[1]：读到的已经是 d（脏值），不是 b', 24, yy+38, '11px '+sans, red, 'left');
+  txt('shape/dtype/device 全部通过 prefer_copy 的兼容检查 → 静默损坏，无任何报错', 24, yy+56, '600 11px '+sans, ink3, 'left');
+});
+
+  // ── pwal-sequence-canvas ──
+RD.push(function(){
+  var c = document.getElementById('pwal-sequence-canvas');
+  if (!c) return;
+  var ctx = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
+  var W = 720, H = 480;
+  c.width = W * dpr; c.height = H * dpr;
+  c.style.width = W + 'px'; c.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+  var cs = getComputedStyle(document.documentElement);
+  var blue = cs.getPropertyValue('--blue').trim() || '#2563eb';
+  var green = cs.getPropertyValue('--green').trim() || '#059669';
+  var amber = cs.getPropertyValue('--amber').trim() || '#d97706';
+  var violet = cs.getPropertyValue('--violet').trim() || '#7c3aed';
+  var ink2 = cs.getPropertyValue('--ink-2').trim() || '#4a483f';
+  var ink3 = cs.getPropertyValue('--ink-3').trim() || '#7a786e';
+  var ink4 = cs.getPropertyValue('--ink-4').trim() || '#b0ae9f';
+  var rule = cs.getPropertyValue('--rule').trim() || '#e4e1d6';
+  var surfDim = cs.getPropertyValue('--surface-dim').trim() || '#f3f0e8';
+  var mono = cs.getPropertyValue('--mono').trim() || 'monospace';
+  var sans = cs.getPropertyValue('--sans').trim() || 'sans-serif';
+
+  var colW = 310, gutter = 40;
+  var x1 = 30, x2 = x1 + colW + gutter;
+  var stepH = 52, padTop = 40;
+
+  function drawStep(cx, y, idx, label, fn, color) {
+    // Number circle
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.arc(cx + 14, y + 14, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 12px ' + mono; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(idx, cx + 14, y + 14);
+    // Label
+    ctx.fillStyle = ink2; ctx.font = '13px ' + sans; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillText(label, cx + 32, y + 12);
+    // Function name
+    ctx.fillStyle = color; ctx.font = '11px ' + mono;
+    ctx.fillText(fn, cx + 32, y + 28);
+    // Connector line to next
+    ctx.strokeStyle = rule; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx + 14, y + 26); ctx.lineTo(cx + 14, y + stepH); ctx.stroke();
+  }
+
+  // Column titles
+  ctx.fillStyle = blue; ctx.font = 'bold 14px ' + mono; ctx.textAlign = 'left';
+  ctx.fillText('FP8 路径', x1 + 14, 22);
+  ctx.fillStyle = violet; ctx.fillText('GPTQ / Marlin 路径', x2 + 14, 22);
+
+  // Divider
+  ctx.strokeStyle = rule; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(x1 + colW + gutter / 2, 10); ctx.lineTo(x1 + colW + gutter / 2, H - 10); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // FP8 steps
+  var fp8Steps = [
+    ['1', '合并分片 Scale', 'process_fp8_weight_tensor_strategy()'],
+    ['2', '转置权重 [N,K]→[K,N]', 'weight = weight.t()'],
+    ['3', '安装新参数', 'replace_parameter(layer, "weight", ...)'],
+    ['4', 'Kernel 定稿（通常 no-op）', 'fp8_linear.process_weights_after_loading()'],
+  ];
+  fp8Steps.forEach(function(s, i) {
+    drawStep(x1, padTop + i * stepH, s[0], s[1], s[2], blue);
+  });
+  // Remove last connector
+  ctx.fillStyle = surfDim;
+  ctx.fillRect(x1 + 13, padTop + 3 * stepH + 26, 3, 30);
+
+  // GPTQ steps
+  var gptqSteps = [
+    ['1', '排序 g_idx（act_order）', 'marlin_sort_g_idx(layer.g_idx)'],
+    ['2', '维度填充到 tile 边界', 'marlin_padded_nk(...)'],
+    ['3', '分配 Marlin workspace', 'marlin_make_workspace_new()'],
+    ['4', 'Repack 权重为 Marlin tile', 'ops.gptq_marlin_repack(...)'],
+    ['5', '排列 Scale 到 Marlin 布局', 'marlin_permute_scales(...)'],
+    ['6', '处理零点 + Bias', 'unpack → pad → transform'],
+    ['7', '安装所有新参数', 'replace_parameter() × N'],
+  ];
+  gptqSteps.forEach(function(s, i) {
+    drawStep(x2, padTop + i * stepH, s[0], s[1], s[2], violet);
+  });
+  // Remove last connector
+  ctx.fillStyle = surfDim;
+  ctx.fillRect(x2 + 13, padTop + 6 * stepH + 26, 3, 30);
+
+  // Bottom annotation
+  var by = padTop + 7 * stepH + 10;
+  ctx.fillStyle = ink3; ctx.font = '12px ' + sans; ctx.textAlign = 'center';
+  ctx.fillText('FP8：权重本身已是正确格式', x1 + colW / 2, padTop + 4 * stepH + 16);
+  ctx.fillText('只需合并 scale + 转置', x1 + colW / 2, padTop + 4 * stepH + 34);
+
+  ctx.fillText('GPTQ：权重需要完全重新打包', x2 + colW / 2, by);
+  ctx.fillText('以匹配 Marlin 的 warp-level 访问模式', x2 + colW / 2, by + 18);
+});
+
+  function drawAll(){ RD.forEach(function(f){ try{ f(); }catch(e){} }); }
+  drawAll();
+  // Re-render diagrams when the viewer flips theme (tokens are read at draw time).
+  try {
+    new MutationObserver(drawAll).observe(document.documentElement,
+      {attributes:true, attributeFilter:['data-theme']});
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) mq.addEventListener('change', drawAll);
+  } catch(e){}
+})();
+</script>

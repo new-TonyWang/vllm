@@ -1262,6 +1262,115 @@ class MLAAttention(nn.Module, AttentionLayerBase):
         if not should_load_quant_weights(quant_method):
             set_default_quant_scales(self, register_buffer=False)
 
+    def supports_selective_reload(self) -> bool:
+        """Whether MLA's derived weights can be refreshed in place.
+
+        All paths except AMX retain the source weight and preallocate their
+        runtime representations.  AMX releases the source weight after
+        packing, so it remains on the layerwise fallback.
+        """
+        if self.is_amx_bmm_enabled:
+            return False
+        if (
+            self.is_aiter_triton_fp4_bmm_enabled
+            or self.is_aiter_triton_fp8_bmm_enabled
+        ):
+            return all(
+                hasattr(self, name)
+                for name in ("W_K", "W_K_scale", "W_V", "W_V_scale")
+            )
+        return hasattr(self, "W_UK_T") and hasattr(self, "W_UV")
+
+    def refresh_derived_state(
+        self, updated_parameter_names: frozenset[str] | None = None
+    ) -> None:
+        """Refresh absorbed MLA weights without replacing graph-visible storage."""
+        if updated_parameter_names and not any(
+            name.endswith("kv_b_proj.weight") for name in updated_parameter_names
+        ):
+            return
+        source = get_and_maybe_dequant_weights(
+            self.kv_b_proj, out_dtype=torch.bfloat16
+        ).T
+        source = source.view(
+            self.kv_lora_rank,
+            self.num_heads,
+            self.qk_nope_head_dim + self.v_head_dim,
+        )
+        w_uk, w_uv = source.split(
+            [self.qk_nope_head_dim, self.v_head_dim], dim=-1
+        )
+        w_uv = w_uv.transpose(0, 1)
+        w_uk_t = w_uk.permute(1, 2, 0)
+
+        if self.is_aiter_triton_fp4_bmm_enabled:
+            from vllm.model_executor.layers.quantization.quark.utils import (
+                quark_quantize_weight_to_mxfp4,
+            )
+
+            w_k, w_k_scale = quark_quantize_weight_to_mxfp4(w_uk)
+            w_v, w_v_scale = quark_quantize_weight_to_mxfp4(
+                w_uv.permute(0, 2, 1)
+            )
+            w_k = w_k.transpose(0, 1)
+            w_k_scale = w_k_scale.transpose(0, 1)
+            for target, value, name in (
+                (self.W_K, w_k, "W_K"),
+                (self.W_K_scale, w_k_scale, "W_K_scale"),
+                (self.W_V, w_v, "W_V"),
+                (self.W_V_scale, w_v_scale, "W_V_scale"),
+            ):
+                if target.shape != value.shape:
+                    raise RuntimeError(f"MLA {name} shape changed during reload")
+                with torch.no_grad():
+                    target.copy_(value)
+            return
+
+        if self.is_aiter_triton_fp8_bmm_enabled:
+            W_K = w_uk.transpose(0, 1)
+            W_V = w_uv.permute(0, 2, 1)
+            w_k, w_k_scale = dynamic_per_batched_tensor_quant(
+                W_K, dtype=current_platform.fp8_dtype()
+            )
+            w_v, w_v_scale = dynamic_per_batched_tensor_quant(
+                W_V, dtype=current_platform.fp8_dtype()
+            )
+            for target, value, name in (
+                (self.W_K, w_k, "W_K"),
+                (self.W_K_scale, w_k_scale, "W_K_scale"),
+                (self.W_V, w_v, "W_V"),
+                (self.W_V_scale, w_v_scale, "W_V_scale"),
+            ):
+                if target.shape != value.shape:
+                    raise RuntimeError(f"MLA {name} shape changed during reload")
+                with torch.no_grad():
+                    target.copy_(value)
+            return
+
+        if not hasattr(self, "W_UV") or not hasattr(self, "W_UK_T"):
+            raise RuntimeError("MLA absorbed weights are not preallocated")
+        if self.W_UV.shape != w_uv.shape or self.W_UK_T.shape != w_uk_t.shape:
+            raise RuntimeError("MLA absorbed weight shape changed during reload")
+        # These tensors are consumed by compiled graphs.  Keep their storage
+        # identity stable while accepting a source tensor with a different
+        # checkpoint dtype (the runtime representation is BF16 here).
+        with torch.no_grad():
+            self.W_UV.copy_(w_uv)
+            self.W_UK_T.copy_(w_uk_t)
+            if self.dcp_q_replicate:
+                if self.W_UK_T_dcp_qrep is None:
+                    raise RuntimeError(
+                        "MLA DCP derived storage is not preallocated"
+                    )
+                gathered = get_dcp_group().all_gather(
+                    self.W_UK_T.contiguous(), dim=0
+                )
+                if gathered.shape != self.W_UK_T_dcp_qrep.shape:
+                    raise RuntimeError(
+                        "MLA DCP derived shape changed during reload"
+                    )
+                self.W_UK_T_dcp_qrep.copy_(gathered)
+
     def get_attn_backend(self) -> type[AttentionBackend]:
         return self.attn_backend
 

@@ -44,6 +44,7 @@ from vllm.distributed.weight_transfer.packed_tensor import (
 __all__ = [
     "NCCLWeightTransferInitInfo",
     "NCCLTrainerInitInfo",
+    "NCCLTrainerSendWeightsArgs",
     "NCCLWeightTransferUpdateInfo",
     "NCCLWeightTransferEngine",
     "NCCLTrainerWeightTransferEngine",
@@ -82,6 +83,16 @@ class NCCLTrainerInitInfo(TrainerInitInfo):
 
 
 @dataclass
+class NCCLTrainerSendWeightsArgs:
+    """Compatibility arguments for trainer-side checkpoint publishing."""
+
+    group: object
+    packed: bool = True
+    packed_buffer_size_bytes: int = DEFAULT_PACKED_BUFFER_SIZE_BYTES
+    packed_num_buffers: int = DEFAULT_PACKED_NUM_BUFFERS
+
+
+@dataclass
 class NCCLWeightTransferUpdateInfo(WeightTransferUpdateInfo):
     """Per-round update info for the dense NCCL weight transfer backend.
 
@@ -94,6 +105,10 @@ class NCCLWeightTransferUpdateInfo(WeightTransferUpdateInfo):
     names: list[str]
     dtype_names: list[str]
     shapes: list[list[int]]
+    # Kept for compatibility with older trainer clients. The wire mode is
+    # negotiated during initialization and the receiver intentionally ignores
+    # this per-bucket copy.
+    packed: bool | None = None
 
     def __post_init__(self):
         """Validate that all lists have the same length."""
@@ -126,6 +141,24 @@ class NCCLWeightTransferEngine(
     init_info_cls = NCCLWeightTransferInitInfo
     update_info_cls = NCCLWeightTransferUpdateInfo
 
+    @staticmethod
+    def trainer_send_weights(iterator, args: NCCLTrainerSendWeightsArgs) -> None:
+        """Publish checkpoint tensors using the trainer compatibility API."""
+        if args.packed:
+            packed_nccl_broadcast_producer(
+                iterator=iterator,
+                group=args.group,
+                src=0,
+                post_iter_func=lambda item: item[1],
+                buffer_size_bytes=args.packed_buffer_size_bytes,
+                num_buffers=args.packed_num_buffers,
+            )
+            return
+        stream = torch.cuda.current_stream()
+        for _name, tensor in iterator:
+            send = tensor if tensor.is_contiguous() else tensor.contiguous()
+            args.group.broadcast(send, src=0, stream=stream)
+
     def __init__(
         self,
         config: WeightTransferConfig,
@@ -140,6 +173,7 @@ class NCCLWeightTransferEngine(
         self.packed = False
         self.packed_buffer_size_bytes = DEFAULT_PACKED_BUFFER_SIZE_BYTES
         self.packed_num_buffers = DEFAULT_PACKED_NUM_BUFFERS
+        self._updated_parameter_names: set[str] = set()
 
     def init_transfer_engine(self, init_info: NCCLWeightTransferInitInfo) -> None:
         """
@@ -158,6 +192,17 @@ class NCCLWeightTransferEngine(
             init_info, self.parallel_config
         )
 
+    @classmethod
+    def trainer_init(cls, init_info: NCCLWeightTransferInitInfo):
+        """Open the legacy trainer-side NCCL endpoint.
+
+        Older external publishers use this worker-engine entry point directly
+        and perform the HTTP worker initialization themselves. Keep that
+        protocol compatible while the full trainer API lives on
+        ``NCCLTrainerWeightTransferEngine``.
+        """
+        return open_trainer_endpoint(init_info)
+
     def start_weight_update(self) -> None:
         """Initialize layerwise reloading for the incoming checkpoint weights."""
         from vllm.model_executor.model_loader.reload import (
@@ -165,6 +210,7 @@ class NCCLWeightTransferEngine(
         )
 
         initialize_layerwise_reload(self.model)
+        self._updated_parameter_names.clear()
 
     def finish_weight_update(self) -> None:
         """Finalize layerwise reloading after all weights have been received."""
@@ -172,7 +218,12 @@ class NCCLWeightTransferEngine(
             finalize_layerwise_reload,
         )
 
-        finalize_layerwise_reload(self.model, self.model_config)
+        finalize_layerwise_reload(
+            self.model,
+            self.model_config,
+            frozenset(self._updated_parameter_names),
+        )
+        self._updated_parameter_names.clear()
 
     def receive_weights(self, update_info: NCCLWeightTransferUpdateInfo) -> None:
         """
@@ -192,6 +243,8 @@ class NCCLWeightTransferEngine(
                 "NCCL weight transfer not initialized. "
                 "Call init_transfer_engine() first."
             )
+
+        self._updated_parameter_names.update(update_info.names)
 
         from vllm.model_executor.model_loader.mtp_validation import (
             disable_mtp_completeness_check,

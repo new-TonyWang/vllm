@@ -221,6 +221,16 @@ class RoutedExperts(PluggableLayer):
                 self.quant_method.get_fused_moe_quant_config(self)
             )
 
+    def refresh_derived_state(
+        self,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Delegate audited expert-state refresh to the active quant method."""
+        method = self.quant_method
+        capability = getattr(method, "supports_selective_reload", None)
+        if callable(capability) and capability():
+            method.refresh_derived_state(self, updated_parameter_names)
+
     @property
     def use_ep(self) -> bool:
         return self.moe_config.moe_parallel_config.use_ep

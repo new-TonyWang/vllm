@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import gc
 import inspect
+from types import SimpleNamespace
 from unittest.mock import Mock
 from weakref import WeakKeyDictionary, ref
 
@@ -11,11 +12,38 @@ from torch.nn.parameter import UninitializedParameter
 
 import vllm.model_executor.model_loader.reload.layerwise as reload_layerwise
 import vllm.model_executor.model_loader.reload.meta as reload_meta
+from vllm.model_executor.model_loader.reload.selective import (
+    refresh_derived_state,
+)
 from vllm.config import ModelConfig
 from vllm.model_executor.layers.attention import MMEncoderAttention
+from vllm.model_executor.layers.attention.mla_attention import MLAAttention
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.linear import QKVParallelLinear
 from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
+import vllm.models.deepseek_v4.nvidia.model as deepseek_v4_nvidia
+from vllm.models.deepseek_v4.nvidia.mtp import DeepSeekV4MTP as DeepseekV4NvidiaMTP
+from vllm.models.deepseek_v4.nvidia.dspark import (
+    DSparkDeepseekV4ForCausalLM as DeepseekV4NvidiaDSpark,
+)
+from vllm.models.kimi_k3.nvidia.mla import MultiHeadLatentAttention
+from vllm.model_executor.layers.fused_moe.experts.trtllm_nvfp4_moe import (
+    TrtLlmNvFp4ExpertsBase,
+)
+from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutedsl_moe import (
+    FlashInferCuteDSLExperts,
+)
+from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutedsl_batched_moe import (
+    FlashInferCuteDSLBatchedExperts,
+)
+from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import CutlassExpertsFp4
+from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutlass_moe import (
+    FlashInferExperts,
+)
+from vllm.model_executor.layers.fused_moe.experts.flashinfer_b12x_moe import (
+    FlashInferB12xExperts,
+)
 from vllm.model_executor.model_loader.reload.layerwise import (
     finalize_layerwise_reload,
     initialize_layerwise_reload,
@@ -76,6 +104,413 @@ class _ParentAliasedChildBufferLayer(torch.nn.Module):
         self.register_buffer(
             "conv_weights", self.conv1d.weight.detach().view(-1), persistent=False
         )
+
+
+class _SelectiveRefreshLayer(torch.nn.Module):
+    def __init__(self, supports=True):
+        super().__init__()
+        self.value = torch.nn.Parameter(torch.tensor([1.0]))
+        self.derived = torch.zeros(1)
+        self.refresh_calls = []
+        self.supports = supports
+
+    def supports_selective_reload(self):
+        return self.supports
+
+    def refresh_derived_state(self, updated_parameter_names=None):
+        self.refresh_calls.append(updated_parameter_names)
+        self.derived.copy_(self.value)
+
+
+@pytest.mark.parametrize(
+    "model_cls",
+    [
+        DeepseekV4NvidiaMTP,
+        DeepseekV4NvidiaDSpark,
+    ],
+)
+def test_deepseek_v4_platform_variants_fail_closed(model_cls):
+    """Platform variants without in-place finalization must use fallback."""
+    assert model_cls.supports_selective_reload(object.__new__(model_cls)) is False
+
+
+def test_selective_refresh_is_gated_and_preserves_storage():
+    supported = _SelectiveRefreshLayer()
+    unsupported = _SelectiveRefreshLayer(supports=False)
+    model = torch.nn.ModuleList([supported, unsupported])
+    ptr = supported.derived.data_ptr()
+
+    refresh_derived_state(model, frozenset({"value"}))
+    supported.value.data.fill_(2.0)
+    refresh_derived_state(model, frozenset({"value"}))
+
+    assert supported.derived.item() == 2.0
+    assert supported.derived.data_ptr() == ptr
+    assert len(supported.refresh_calls) == 2
+    assert unsupported.refresh_calls == []
+
+
+def test_selective_refresh_empty_dependency_set_means_full_update():
+    layer = _SelectiveRefreshLayer()
+    refresh_derived_state(layer, frozenset())
+    assert layer.refresh_calls == [frozenset()]
+
+
+def test_layerwise_reload_restores_before_loading_and_refreshes_after():
+    events = []
+
+    class _RestoreQuantMethod(QuantizeMethodBase):
+        def create_weights(self, layer, *args, **kwargs):
+            raise NotImplementedError
+
+        def apply(self, layer, *args, **kwargs):
+            raise NotImplementedError
+
+        def supports_selective_reload(self):
+            return True
+
+        def restore_weights_before_loading(self, layer):
+            events.append("restore")
+
+        def process_weights_after_loading(self, layer):
+            events.append("process")
+
+    class _RestoreLayer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.quant_method = _RestoreQuantMethod()
+            self.weight = torch.nn.Parameter(torch.ones(2))
+            self.weight.weight_loader = default_weight_loader
+
+        def refresh_derived_state(self, updated_parameter_names=None):
+            events.append("refresh")
+
+    layer = _RestoreLayer()
+    record_metadata_for_reloading(layer)
+    initialize_layerwise_reload(layer)
+    assert events == ["restore"]
+
+    layer.weight.weight_loader(layer.weight, torch.full((2,), 3.0))
+    finalize_layerwise_reload(layer, model_config=None)
+
+    assert events == ["restore", "refresh"]
+    assert torch.equal(layer.weight, torch.full((2,), 3.0))
+
+
+def test_kv_cache_scale_refresh_recomputes_in_place():
+    class _KVMethod(BaseKVCacheMethod):
+        def create_weights(self, layer, *args, **kwargs):
+            pass
+
+        def apply(self, layer, *args, **kwargs):
+            raise NotImplementedError
+
+    layer = torch.nn.Module()
+    layer.kv_cache_dtype = "fp8"
+    layer.q_scale = torch.nn.Parameter(torch.tensor(2.0), requires_grad=False)
+    layer.k_scale = torch.nn.Parameter(torch.tensor(3.0), requires_grad=False)
+    layer.v_scale = torch.nn.Parameter(torch.tensor(4.0), requires_grad=False)
+    layer.prob_scale = torch.nn.Parameter(torch.tensor(5.0), requires_grad=False)
+    for name in ("_q_scale", "_k_scale", "_v_scale", "_prob_scale"):
+        layer.register_buffer(name, torch.ones((), dtype=torch.float32))
+    layer._q_scale_float = layer._k_scale_float = layer._v_scale_float = 1.0
+    layer._prob_scale_float = 1.0
+    layer._k_scale_cpu = torch.ones((), dtype=torch.float32)
+    layer._v_scale_cpu = torch.ones((), dtype=torch.float32)
+
+    method = _KVMethod(None)
+    scale_names = ("_q_scale", "_k_scale", "_v_scale", "_prob_scale")
+    ptrs = tuple(getattr(layer, name).data_ptr() for name in scale_names)
+    method.process_weights_after_loading(layer)
+    assert (
+        layer._q_scale.item(),
+        layer._k_scale.item(),
+        layer._v_scale.item(),
+        layer._prob_scale.item(),
+    ) == (2, 3, 4, 5)
+
+    layer.q_scale.data.fill_(7.0)
+    layer.k_scale.data.fill_(8.0)
+    layer.v_scale.data.fill_(9.0)
+    method.refresh_derived_state(layer, frozenset({"unrelated.weight"}))
+    assert layer._q_scale.item() == 2
+    method.refresh_derived_state(layer, frozenset({"q_scale"}))
+    assert layer._q_scale.item() == 7
+    assert layer._k_scale.item() == 8
+    assert layer._v_scale.item() == 9
+    assert layer._prob_scale.item() == 5
+    assert ptrs == tuple(getattr(layer, name).data_ptr() for name in scale_names)
+
+
+def test_mla_refresh_recomputes_absorbed_weights_in_place():
+    layer = SimpleNamespace(
+        kv_lora_rank=2,
+        num_heads=2,
+        qk_nope_head_dim=3,
+        v_head_dim=4,
+        dcp_q_replicate=False,
+        is_amx_bmm_enabled=False,
+        is_aiter_triton_fp4_bmm_enabled=False,
+        is_aiter_triton_fp8_bmm_enabled=False,
+        kv_b_proj=SimpleNamespace(
+            weight=torch.arange(28, dtype=torch.float32).view(14, 2),
+            quant_method=None,
+        ),
+    )
+    source = layer.kv_b_proj.weight.T.view(2, 2, 7)
+    w_uk, w_uv = source.split([3, 4], dim=-1)
+    layer.W_UK_T = w_uk.permute(1, 2, 0).clone()
+    layer.W_UV = w_uv.transpose(0, 1).clone()
+    ptrs = (layer.W_UK_T.data_ptr(), layer.W_UV.data_ptr())
+
+    MLAAttention.refresh_derived_state(layer)
+
+    assert torch.equal(layer.W_UK_T, w_uk.permute(1, 2, 0))
+    assert torch.equal(layer.W_UV, w_uv.transpose(0, 1))
+    assert ptrs == (layer.W_UK_T.data_ptr(), layer.W_UV.data_ptr())
+
+
+def test_mla_amx_declares_selective_reload_unsafe_after_source_release():
+    """AMX packing releases kv_b_proj, so derived buffers must use fallback."""
+    layer = SimpleNamespace(
+        is_amx_bmm_enabled=True,
+        is_aiter_triton_fp4_bmm_enabled=False,
+        is_aiter_triton_fp8_bmm_enabled=False,
+        # AMX does not create the generic absorbed buffers, but keep these
+        # present to ensure the capability check remains fail-closed.
+        W_UK_T=torch.empty(2, 3, 4),
+        W_UV=torch.empty(2, 4, 5),
+    )
+
+    assert not MLAAttention.supports_selective_reload(layer)
+
+
+def test_kimi_k3_mla_refreshes_weights_and_inverse_scales_in_place():
+    layer = SimpleNamespace(
+        kv_lora_rank=2,
+        num_heads=2,
+        num_local_heads=2,
+        qk_nope_head_dim=3,
+        v_head_dim=4,
+        kv_b_proj=SimpleNamespace(
+            weight=torch.arange(28, dtype=torch.float32).view(14, 2),
+            quant_method=None,
+        ),
+        W_UK_T=torch.empty((2, 3, 2), dtype=torch.bfloat16),
+        W_UV=torch.empty((2, 2, 4), dtype=torch.bfloat16),
+        _q_scale=torch.tensor([2.0]),
+        _k_scale=torch.tensor([4.0]),
+        _q_scale_inv=torch.ones(1),
+        _k_scale_inv=torch.ones(1),
+    )
+    assert MultiHeadLatentAttention.supports_selective_reload(layer)
+    uk_ptr, uv_ptr = layer.W_UK_T.data_ptr(), layer.W_UV.data_ptr()
+    q_inv_ptr, k_inv_ptr = (
+        layer._q_scale_inv.data_ptr(),
+        layer._k_scale_inv.data_ptr(),
+    )
+
+    MultiHeadLatentAttention.refresh_derived_state(layer)
+    source = layer.kv_b_proj.weight.T.to(torch.bfloat16).view(2, 2, 7)
+    w_uk, w_uv = source.split([3, 4], dim=-1)
+    assert torch.equal(layer.W_UK_T, w_uk.permute(1, 2, 0))
+    assert torch.equal(layer.W_UV, w_uv.transpose(0, 1))
+    assert layer._q_scale_inv.item() == 0.5
+    assert layer._k_scale_inv.item() == 0.25
+    assert (uk_ptr, uv_ptr) == (layer.W_UK_T.data_ptr(), layer.W_UV.data_ptr())
+    assert (q_inv_ptr, k_inv_ptr) == (
+        layer._q_scale_inv.data_ptr(),
+        layer._k_scale_inv.data_ptr(),
+    )
+
+    layer.kv_b_proj.weight.add_(1)
+    layer._q_scale.fill_(8)
+    MultiHeadLatentAttention.refresh_derived_state(layer, frozenset({"q_scale"}))
+    assert layer._q_scale_inv.item() == 0.125
+    assert layer._k_scale_inv.item() == 0.25
+    # A scale-only update must not alter the absorbed weight representation.
+    assert torch.equal(layer.W_UK_T, w_uk.permute(1, 2, 0))
+
+    MultiHeadLatentAttention.refresh_derived_state(
+        layer, frozenset({"kv_b_proj.weight"})
+    )
+    updated = (layer.kv_b_proj.weight.T + 0).to(torch.bfloat16).view(2, 2, 7)
+    updated_uk, updated_uv = updated.split([3, 4], dim=-1)
+    assert torch.equal(layer.W_UK_T, updated_uk.permute(1, 2, 0))
+    assert torch.equal(layer.W_UV, updated_uv.transpose(0, 1))
+
+
+def test_deepseek_v4_mhc_broadcast_refresh_preserves_storage(monkeypatch):
+    """mHC broadcast is refreshed in place after its source parameter changes."""
+    layer = object.__new__(deepseek_v4_nvidia.DeepseekV4DecoderLayer)
+    torch.nn.Module.__init__(layer)
+    layer.hc_mult = 2
+    layer.hidden_size = 3
+    layer.hc_attn_fn = torch.nn.Parameter(
+        torch.arange(48, dtype=torch.float32).view(8, 6), requires_grad=False
+    )
+    layer.hc_attn_fn_broadcast = None
+
+    model = object.__new__(deepseek_v4_nvidia.DeepseekV4Model)
+    torch.nn.Module.__init__(model)
+    model.layers = torch.nn.ModuleList([layer])
+    model.start_layer = 0
+    model.end_layer = 1
+    monkeypatch.setattr(
+        deepseek_v4_nvidia,
+        "get_pp_group",
+        lambda: SimpleNamespace(is_first_rank=True),
+    )
+
+    model.finalize_mhc_broadcast_weights()
+    assert layer.hc_attn_fn_broadcast is not None
+    ptr = layer.hc_attn_fn_broadcast.data_ptr()
+    expected = layer.hc_attn_fn.view(-1, 2, 3).sum(dim=1)
+    assert torch.equal(layer.hc_attn_fn_broadcast, expected)
+
+    layer.hc_attn_fn.data.add_(5)
+    model.refresh_mhc_broadcast_weights()
+    assert torch.equal(
+        layer.hc_attn_fn_broadcast,
+        layer.hc_attn_fn.view(-1, 2, 3).sum(dim=1),
+    )
+    assert layer.hc_attn_fn_broadcast.data_ptr() == ptr
+
+
+@pytest.mark.parametrize("use_mega_moe", [False, True])
+def test_deepseek_v4_selective_reload_capability_tracks_mega_moe(use_mega_moe):
+    """Mega-MoE layers disable selective reload until runtime state is refreshable."""
+    model = object.__new__(deepseek_v4_nvidia.DeepseekV4ForCausalLM)
+    torch.nn.Module.__init__(model)
+    model.model = SimpleNamespace(
+        layers=[SimpleNamespace(ffn=SimpleNamespace(use_mega_moe=use_mega_moe))]
+    )
+    assert model.supports_selective_reload() is (not use_mega_moe)
+
+
+def test_trtllm_nvfp4_refresh_recomputes_scales_in_place():
+    class _Config:
+        g1_alphas = torch.tensor([3.0, 4.0])
+        a2_gscale = torch.tensor([0.5, 0.25])
+
+    layer = torch.nn.Module()
+    layer.w13_weight_scale_2 = torch.nn.Parameter(torch.ones(2, 2))
+    layer.w2_weight_scale_2 = torch.nn.Parameter(torch.ones(2, 2))
+    layer.w13_input_scale = torch.tensor([2.0, 3.0])
+    layer.w2_input_scale = torch.tensor([4.0, 5.0])
+    experts = object.__new__(TrtLlmNvFp4ExpertsBase)
+    experts.quant_config = _Config()
+    experts.moe_config = type("MoeConfig", (), {"is_act_and_mul": True})()
+    experts.is_situ = False
+    experts.gemm1_clamp_limit = None
+    experts.gemm1_beta = None
+    experts.gemm1_alpha = None
+    experts.process_weights_after_loading(layer)
+    w13_ptr = layer.w13_weight_scale_2.data_ptr()
+    w2_ptr = layer.w2_weight_scale_2.data_ptr()
+
+    layer.w13_input_scale.copy_(torch.tensor([6.0, 7.0]))
+    layer.w2_input_scale.copy_(torch.tensor([8.0, 9.0]))
+    experts.refresh_derived_state(layer, frozenset({"w13_input_scale"}))
+    experts.refresh_derived_state(layer, frozenset({"w13_input_scale"}))
+
+    assert torch.equal(
+        layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]])
+    )
+    assert torch.equal(
+        layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]])
+    )
+    assert layer.w13_weight_scale_2.data_ptr() == w13_ptr
+    assert layer.w2_weight_scale_2.data_ptr() == w2_ptr
+
+    with torch.no_grad():
+        layer.w13_weight_scale_2.fill_(10.0)
+    experts.refresh_derived_state(layer, frozenset({"w13_weight_scale_2"}))
+    assert torch.equal(
+        layer.w13_weight_scale_2, torch.tensor([[60.0, 70.0], [60.0, 70.0]])
+    )
+
+
+@pytest.mark.parametrize(
+    "experts_cls,quant_config",
+    [
+        (FlashInferCuteDSLExperts, SimpleNamespace()),
+        (FlashInferCuteDSLBatchedExperts, SimpleNamespace()),
+        (CutlassExpertsFp4, SimpleNamespace()),
+        (FlashInferExperts, SimpleNamespace(use_nvfp4_w4a4=True)),
+    ],
+)
+def test_nvfp4_expert_scale_refresh_is_idempotent(experts_cls, quant_config):
+    layer = torch.nn.Module()
+    layer.w13_weight_scale_2 = torch.nn.Parameter(torch.ones(2, 2))
+    layer.w2_weight_scale_2 = torch.nn.Parameter(torch.ones(2, 2))
+    layer.w13_input_scale = torch.tensor([2.0, 3.0])
+    layer.w2_input_scale = torch.tensor([4.0, 5.0])
+    experts = object.__new__(experts_cls)
+    experts.quant_config = quant_config
+    experts.process_weights_after_loading(layer)
+    ptrs = (
+        layer.w13_weight_scale_2.data_ptr(),
+        layer.w2_weight_scale_2.data_ptr(),
+    )
+
+    layer.w13_input_scale.copy_(torch.tensor([6.0, 7.0]))
+    layer.w2_input_scale.copy_(torch.tensor([8.0, 9.0]))
+    names = frozenset({"w13_input_scale", "w2_input_scale"})
+    experts.refresh_derived_state(layer, names)
+    experts.refresh_derived_state(layer, names)
+
+    assert torch.equal(
+        layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]])
+    )
+    assert torch.equal(
+        layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]])
+    )
+    assert ptrs == (
+        layer.w13_weight_scale_2.data_ptr(),
+        layer.w2_weight_scale_2.data_ptr(),
+    )
+
+
+def test_flashinfer_b12x_scale_refresh_rebuilds_mma_in_place(monkeypatch):
+    import vllm.model_executor.layers.fused_moe.experts.flashinfer_b12x_moe as b12x
+
+    def fake_mma(scale, *, m, k, num_groups):
+        del m, k, num_groups
+        return scale.clone()
+
+    monkeypatch.setattr(b12x, "flashinfer_convert_sf_to_mma_layout", fake_mma)
+    layer = torch.nn.Module()
+    layer.w13_weight_scale = torch.nn.Parameter(torch.ones(2, 2, 1))
+    layer.w2_weight_scale = torch.nn.Parameter(torch.ones(2, 2, 1))
+    layer.w13_weight_scale_2 = torch.nn.Parameter(torch.tensor([2.0, 3.0]))
+    layer.w2_weight_scale_2 = torch.nn.Parameter(torch.tensor([4.0, 5.0]))
+    quant_config = SimpleNamespace(
+        w1_scale=layer.w13_weight_scale,
+        w2_scale=layer.w2_weight_scale,
+        a2_gscale=torch.tensor([7.0, 8.0]),
+    )
+    experts = object.__new__(FlashInferB12xExperts)
+    experts.quant_config = quant_config
+    experts.process_weights_after_loading(layer)
+    w1_ptr = layer.w13_weight_scale.data_ptr()
+    mma_ptr = experts.w1_sf_mma.data_ptr()
+
+    with torch.no_grad():
+        layer.w13_weight_scale.copy_(
+            torch.full_like(layer.w13_weight_scale, 10.0)
+        )
+        layer.w13_weight_scale_2.copy_(torch.tensor([6.0, 7.0]))
+    experts.refresh_derived_state(
+        layer, frozenset({"w13_weight_scale", "w13_weight_scale_2"})
+    )
+    assert torch.equal(
+        layer.w13_weight_scale[:, :, 0], torch.tensor([[60.0, 60.0], [70.0, 70.0]])
+    )
+    assert torch.equal(layer.w13_weight_scale_2, torch.ones(2))
+    assert torch.equal(quant_config.a2_gscale, torch.ones(2))
+    assert layer.w13_weight_scale.data_ptr() == w1_ptr
+    assert experts.w1_sf_mma.data_ptr() == mma_ptr
 
 
 class _ChildAliasOnlyBufferLayer(torch.nn.Module):

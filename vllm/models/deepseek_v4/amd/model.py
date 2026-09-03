@@ -973,6 +973,10 @@ def _make_deepseek_v4_weights_mapper(
 
 
 class DeepseekV4ForCausalLM(nn.Module, SupportsPP, SupportsEagle3):
+    def supports_selective_reload(self) -> bool:
+        """ROCm preshuffle finalization has no in-place refresh path."""
+        return False
+
     model_cls = DeepseekV4Model
 
     # Default mapper assumes the original FP4-expert checkpoint layout.

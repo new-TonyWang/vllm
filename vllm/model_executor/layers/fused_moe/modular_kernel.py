@@ -518,6 +518,18 @@ class FusedMoEExperts(ABC):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:  # noqa: B027
         pass
 
+    def supports_selective_reload(self) -> bool:
+        """Whether this expert implementation has an audited refresh path."""
+        return False
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Refresh runtime-derived expert state in place when supported."""
+        del layer, updated_parameter_names
+
     @staticmethod
     def is_monolithic() -> bool:
         raise NotImplementedError("Implemented by subclasses.")

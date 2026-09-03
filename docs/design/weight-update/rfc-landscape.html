@@ -1,0 +1,264 @@
+<title>SGLang Weight Update 全景</title>
+<style>
+  :root {
+    --bg: #f5f4f0; --surface: #ffffff; --surface-dim: #eceae6;
+    --text: #1c1c28; --text-2: #4c4c5c; --text-3: #7c7c8c;
+    --border: #d4d2cc; --divider: #e0ded8;
+    --accent: #d04820; --accent-bg: #fdf0ea;
+    --blue: #2050a0; --blue-bg: #e8eef8;
+    --green: #1a7a42; --green-bg: #e8f5ee;
+    --amber: #9e6c00; --amber-bg: #fef7e0;
+    --red: #b82030; --red-bg: #fce8ea;
+    --code-bg: #e8e6e2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e0e14; --surface: #18182a; --surface-dim: #222230;
+      --text: #dcdce4; --text-2: #a0a0b0; --text-3: #707080;
+      --border: #333340; --divider: #2a2a38;
+      --accent: #f07848; --accent-bg: #281810;
+      --blue: #6a90d8; --blue-bg: #1a2240;
+      --green: #50c878; --green-bg: #102820;
+      --amber: #e8b830; --amber-bg: #201c08;
+      --red: #e85858; --red-bg: #280c0c;
+      --code-bg: #222238;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e0e14; --surface: #18182a; --surface-dim: #222230;
+    --text: #dcdce4; --text-2: #a0a0b0; --text-3: #707080;
+    --border: #333340; --divider: #2a2a38;
+    --accent: #f07848; --accent-bg: #281810;
+    --blue: #6a90d8; --blue-bg: #1a2240;
+    --green: #50c878; --green-bg: #102820;
+    --amber: #e8b830; --amber-bg: #201c08;
+    --red: #e85858; --red-bg: #280c0c;
+    --code-bg: #222238;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; line-height: 1.6; padding: 2.5rem 1.5rem; }
+  .page { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.45rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.1rem; }
+  .sub { color: var(--text-3); font-size: 0.78rem; margin-bottom: 2rem; }
+  h2 { font-size: 1.08rem; font-weight: 700; margin: 2rem 0 0.5rem; padding-top: 1.2rem; border-top: 1px solid var(--divider); }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h3 { font-size: 0.88rem; font-weight: 600; margin: 1.1rem 0 0.3rem; }
+  p { font-size: 0.82rem; color: var(--text-2); margin-bottom: 0.6rem; }
+  p strong { color: var(--text); }
+  code { font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace; font-size: 0.7rem; background: var(--code-bg); padding: 0.08rem 0.25rem; border-radius: 3px; color: var(--text); }
+  pre { background: var(--code-bg); border-radius: 6px; padding: 0.65rem 0.85rem; overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  pre code { background: none; padding: 0; font-size: 0.68rem; line-height: 1.55; }
+  ul, ol { margin: 0.2rem 0 0.7rem; padding-left: 1.2rem; }
+  li { font-size: 0.8rem; color: var(--text-2); margin-bottom: 0.2rem; }
+  li strong { color: var(--text); }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.55rem 0.75rem; margin: 0.4rem 0; }
+  .card + .card { margin-top: 0.5rem; }
+  .card-head { font-size: 0.82rem; font-weight: 600; margin-bottom: 0.2rem; display: flex; gap: 0.35rem; align-items: center; flex-wrap: wrap; }
+  .card-body { font-size: 0.76rem; color: var(--text-2); line-height: 1.5; }
+  .card-body strong { color: var(--text); }
+
+  .tag { display: inline-block; padding: 0.05rem 0.28rem; border-radius: 3px; font-size: 0.58rem; font-weight: 600; white-space: nowrap; vertical-align: middle; }
+  .tag-id { background: var(--accent-bg); color: var(--accent); }
+  .tag-status { background: var(--green-bg); color: var(--green); }
+  .tag-risk { background: var(--red-bg); color: var(--red); }
+  .tag-key { background: var(--blue-bg); color: var(--blue); }
+
+  .note { background: var(--surface-dim); border-radius: 6px; padding: 0.55rem 0.75rem; font-size: 0.76rem; color: var(--text-2); margin: 0.5rem 0 0.8rem; line-height: 1.5; }
+  .note strong { color: var(--text); }
+
+  .example { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.4rem 0 0.7rem; }
+  .example-label { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-3); margin-bottom: 0.2rem; }
+  .example-body { font-size: 0.76rem; color: var(--text-2); line-height: 1.5; }
+
+  .flow { display: flex; flex-direction: column; gap: 0; margin: 0.4rem 0 0.6rem; }
+  .flow-s { background: var(--surface); border: 1px solid var(--border); padding: 0.4rem 0.65rem; font-size: 0.74rem; }
+  .flow-s + .flow-s { margin-top: -1px; border-top-left-radius: 0; border-top-right-radius: 0; }
+  .flow-s:first-child { border-radius: 6px 6px 0 0; }
+  .flow-s:last-child { border-radius: 0 0 6px 6px; }
+  .flow-s:only-child { border-radius: 6px; }
+  .flow-s .n { display: inline-flex; align-items: center; justify-content: center; width: 1.1rem; height: 1.1rem; border-radius: 50%; font-size: 0.6rem; font-weight: 700; background: var(--surface-dim); color: var(--text-3); margin-right: 0.25rem; }
+
+  .tbl-wrap { overflow-x: auto; margin: 0.4rem 0 0.7rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.74rem; }
+  thead th { text-align: left; font-weight: 600; padding: 0.3rem 0.4rem; border-bottom: 2px solid var(--border); font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); white-space: nowrap; }
+  td { padding: 0.28rem 0.4rem; border-bottom: 1px solid var(--divider); vertical-align: top; color: var(--text-2); }
+  tr:last-child td { border-bottom: none; }
+</style>
+
+<div class="page">
+  <h1>SGLang Weight Update 全景</h1>
+  <p class="sub">当前方案 · 已踩的坑 · 正在推进的 RFC · 对我们设计的启示</p>
+
+  <!-- ====== 1. CURRENT ====== -->
+  <h2>SGLang 生态怎么做 Weight Update：Miles 是正式答案</h2>
+
+  <p>回答"SGLang 做不做 PWAL"必须先分清两层：<strong>主线的裸 RL 通道</strong>（veRL 等外部框架在用）和 <strong>Miles</strong>——SGLang 官方唯一指定的 RL 框架。两者行为相反。生态的正式流程是 Miles 的：<strong>update 后无条件全量重跑 PWAL，restore 按需前置</strong>。（以下全部按 2026-08 源码逐路径核实。）</p>
+
+  <h3>Miles 流程（生态正式路径）</h3>
+  <div class="flow">
+    <div class="flow-s"><span class="n">1</span> <strong>restore（条件性）</strong> &mdash; 仅当 quant_method 为 compressed-tensors（int4/fp4，PWAL 会破坏 checkpoint shape）时，先发 <code>restore_weights_before_load</code> RPC：<code>resize_</code> 回 checkpoint shape</div>
+    <div class="flow-s"><span class="n">2</span> <strong>trainer 侧转换（eager）</strong> &mdash; <code>convert_to_hf</code> 管道：去 vocab padding → megatron→HF 布局/命名 → <code>quantize_params</code> <strong>在线量化到 checkpoint 格式</strong>（fp8 blockwise / mxfp8 / nvfp4 / int4 四个 quantizer，fp8 的直接 import sglang 的 ue8m0 helper 对齐 scale 格式）</div>
+    <div class="flow-s"><span class="n">3</span> <strong>传输 + copy</strong> &mdash; 走 <code>update_weights_from_distributed</code>；engine 侧 weight_loader 只做 TP shard + <code>copy_</code>，<strong>零变换</strong></div>
+    <div class="flow-s"><span class="n">4</span> <strong>finish</strong> &mdash; <code>post_process_weights(post_process_quantization=True)</code> RPC = <strong>重跑 PWAL，无条件、全模型扫</strong>（Miles 注释原话："should always be invoked after weight updating"）；p2p/RDMA 路径额外带 <code>post_load_weights=True</code> 显式触发 MLA 派生（常规路径 <code>load_weights</code> 尾部自带）</div>
+  </div>
+
+  <div class="note">
+    <strong>划线原则一句话：checkpoint 格式是分界面。</strong>传输线上跑的、<code>copy_</code> 进 param 的，永远是 checkpoint 格式；kernel/runtime 格式的生成永远留在 finish（PWAL）。量化可以 eager——甚至提前到 trainer 侧——因为量化的目标是 checkpoint 格式而不是 kernel 格式。破坏 checkpoint 格式的层（int4）在 load 前先 restore。
+  </div>
+
+  <h3>主线的四条 update 路径（对照）</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>路径</th><th>用途</th><th>重跑 PWAL？</th><th>派生状态？</th></tr></thead>
+    <tbody>
+      <tr><td><code>update_weights_from_disk</code></td><td>磁盘热换 checkpoint</td><td><strong>✅ 全量</strong>（走 loader 的 <code>load_weights_and_postprocess</code>）</td><td>✅</td></tr>
+      <tr><td><code>update_weights_from_distributed</code> / <code>from_tensor</code></td><td>裸 RL 通道（veRL 等外部框架）</td><td><strong>❌ 不跑</strong>，只调 <code>model.load_weights</code> → 只支持 checkpoint 格式 ≈ runtime 格式（BF16→BF16、预量化 FP8）；INT4/marlin 走这条就是坏的</td><td>✅（<code>load_weights</code> 尾部）</td></tr>
+      <tr><td><code>update_weights_from_ipc</code>（checkpoint-engine）</td><td>checkpoint-engine 集成</td><td><strong>✅ 全量</strong>，但整个 post_hook 包在 try/except 里，<strong>失败降级为 warning</strong>（静默降级）</td><td>✅</td></tr>
+      <tr><td>Miles <code>post_process_weights</code> RPC</td><td>生态正式 RL 路径</td><td><strong>✅ 全量 + 条件 restore</strong></td><td>✅</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>主线里已有我们契约三条的"民间版本"</h3>
+  <p>DeepSeek 系的派生状态刷新（<code>post_load_weights</code>，挂在 <code>load_weights</code> 尾部）已经自发长出了三个机制，与 refresh_derived_state 的三条契约一一对应——但都是局部惯例，没有契约地位：</p>
+  <ul>
+    <li><strong>In-place</strong>：<code>bind_or_assign(target, source)</code>——target 存在就 <code>copy_</code>（保 data_ptr），不存在才赋值。就是我们的 prefer_copy</li>
+    <li><strong>增量</strong>：RL update 时传入本次到达的 <code>weight_names</code>，只重算出现了 kv_b_proj 的层</li>
+    <li><strong>幂等（反面教材）</strong>：首次 derive 就地把 scale 转成 ue8m0 格式（破坏输入），二次跑必须先 <code>inverse_transform_scale_ue8m0</code> 逆变换——代码注释明说是为 RL 多次加载打的补丁。没有"输入必须是 checkpoint 格式"的契约，就只能在 derive 里塞逆变换</li>
+    <li>另：wNa16 的 <code>restore_weights_before_loading</code> 已上岸主线，但主线<strong>零调用点</strong>——RFC 1 上游化停滞的实物证据：零件进了，编排器没进</li>
+  </ul>
+
+  <div class="note">
+    <strong>对我们的启示：</strong>Miles 的划线与我们完全一致——eager 只搬 checkpoint 格式，格式转换与派生刷新全在 finish。差别只在 finish 怎么跑：Miles <strong>无条件全量重跑</strong>，它跑得起（Triton/marlin 的 PWAL 幂等可重入，restore 兜住 int4）；vLLM 抄不起——DEEPGEMM/FLASHINFER/TRTLLM 后端的 PWAL 有真实开销且重建 kernel 对象，无条件重跑正是 #50074/#49695 的病源。refresh_derived_state = <strong>Miles 的分界线 + 契约化的选择性增量</strong>（no-op 层 return、in-place 保 data_ptr、kernel 只建一次）。小彩蛋：trainer 侧 <code>_cached_tensors</code>（q_a/kv_a 凑对才发）与 engine 侧 <code>cached_a_proj</code> 是同一个"到达缓冲"手法的两端——小融合可以 eager+缓冲，MoE w13 级的大融合老实放 finish。
+  </div>
+
+  <!-- ====== 2. BUGS ====== -->
+  <h2>SGLang 已踩的坑</h2>
+
+  <p>这些 bug 和我们要解决的问题完全相同，是 weight update 领域的"共同考试题"。</p>
+
+  <div class="card" style="border-left: 3px solid var(--red)">
+    <div class="card-head"><span class="tag tag-id">sgl#26032</span> PWAL 改 shape 后 weight update crash</div>
+    <div class="card-body">
+      <strong>场景：</strong>NPU 上跑 MoE 模型。冷启动时 PWAL 把 weight transpose 了（改了 shape）。RL weight update 时 trainer 发原始 shape 的 tensor，<code>load_weights</code> 按原始 shape 计算 shard offset → offset 越界 → crash。<br><br>
+      <strong>根因：</strong>PWAL 永久改了 runtime param 的 shape，但 weight_loader 不知道。没人 restore 回 checkpoint shape。<br><br>
+      <strong>教训：</strong>有 layout 转换的层，必须 restore → load → PWAL。不能 "直接 copy_ 进 runtime shape 的 param"。
+    </div>
+  </div>
+
+  <div class="card" style="border-left: 3px solid var(--amber)">
+    <div class="card-head"><span class="tag tag-id">sgl#27718</span> MTP draft weights 永远不更新</div>
+    <div class="card-body">
+      <strong>场景：</strong>DeepSeek-V3 用 MTP（multi-token prediction）做 speculative decoding。weight update 只更新 main model，<strong>draft model 的 NCCL group 从未建立</strong>。<br><br>
+      <strong>教训：</strong>manifest_check 能发现这类遗漏——draft weights 会出现在 "expected but missing" 集合中。
+    </div>
+  </div>
+
+  <div class="card" style="border-left: 3px solid var(--amber)">
+    <div class="card-head"><span class="tag tag-id">sgl#33698</span> 并发 weight update 互相覆盖</div>
+    <div class="card-body">两个并发的 paused weight update 共享 completion state，互相覆盖 future。需要 session/transaction 隔离。</div>
+  </div>
+
+  <!-- ====== 3. RFCS ====== -->
+  <h2>RFC：按对我们的相关性排序</h2>
+  <p>重点看 RFC 1 和 RFC 6，次要看 RFC 2。RFC 3/4/5 不触碰 PWAL/derive 核心设计，压成一览。</p>
+
+  <!-- RFC 1 -->
+  <h3>重点 · RFC 1：restore/PWAL 从 Miles fork 上游化——已停滞</h3>
+  <div class="card">
+    <div class="card-head"><span class="tag tag-id">sgl#28565</span> <span class="tag tag-risk">CLOSED — inactivity 自动关闭</span> <span class="tag tag-key">对我们最重要</span></div>
+    <div class="card-body">
+      <p>上一节的 Miles 流程里，engine 侧的 restore + 全量 PWAL（<code>post_process_weights</code> 的服务端）只存在于私有 fork <code>sglang-miles</code>，生产跑了很久（INT4 QAT for RL）。<strong>上游化</strong> = 把 fork 的改动拆成小 PR 合进官方 <code>main</code>。#28565 就是这个提案——但它依赖 fork 上的其他基础设施（<code>PostProcessWeightsReqInput</code>、<code>PauseGenerationReqInput</code> 等）无法单独抽出，需要 Miles 团队配合拆分，最终因长期无进展被 bot 自动关闭。</p>
+    </div>
+  </div>
+
+  <div class="example">
+    <div class="example-label">Miles fork 上生产验证过的核心逻辑（post_process_weights 服务端）</div>
+    <div class="example-body">
+      <pre><code># restore: runtime format → checkpoint format
+for _, module in model.named_modules():
+    quant_method = getattr(module, "quant_method", None)
+    if quant_method and hasattr(quant_method, "restore_weights_before_loading"):
+        quant_method.restore_weights_before_loading(module)
+
+# PWAL: checkpoint format → runtime format
+for _, module in model.named_modules():
+    quant_method = getattr(module, "quant_method", None)
+    if quant_method and hasattr(quant_method, "process_weights_after_loading"):
+        quant_method.process_weights_after_loading(module)</code></pre>
+    </div>
+  </div>
+
+  <div class="note"><strong>对我们的启示：</strong>restore → load → PWAL 与我们的 start/load/finish 完全对应，且已被 Miles 生产验证——但上游化<strong>停滞了</strong>，经验困在 fork 里，主线的 RL 裸通道至今没有这套后处理（wNa16 的 restore 零件已上岸、无调用点）。"weight update 的后处理契约"在两个生态的主线都是空缺：我们在 vLLM 把 refresh_derived_state 契约先落地，就是这个方向的第一个主线实现。</div>
+
+  <!-- RFC 6 -->
+  <h3>重点 · RFC 6：量化 2026 H2 Roadmap——三处与我们独立收敛</h3>
+  <div class="card">
+    <div class="card-head"><span class="tag tag-id">sgl#31783</span> <span class="tag tag-status">OPEN · 2026-07-29 更新</span></div>
+    <div class="card-body">
+      <p>目标架构一句话：<code>Config → Method → Scheme → Kernel</code>——同一个 kernel 服务多种 checkpoint 格式；离线 checkpoint 加载与在线运行时量化有各自独立的公共接口。其中 §1.2「权重生命周期」和 §1.3「能力注册表」与我们的设计三处撞车：</p>
+    </div>
+  </div>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>Roadmap 项</th><th>SGLang 状态</th><th>对应我们的设计</th></tr></thead>
+    <tbody>
+      <tr><td><strong>标准化 <code>process_weights_after_loading</code></strong>——明确点名覆盖 "weight-update paths"（跨 ModelOpt/CT/Quark/AWQ/GPTQ/speculative）</td><td>checkbox，未动工</td><td><strong>refresh_derived_state 契约</strong>——我们已有完整方案</td></tr>
+      <tr><td><strong>能力注册表</strong>（sgl#31774）：format/scheme/backend/platform/scale 粒度/parallelism 的机器可读兼容元数据；配套 fail-early（#32333 不支持组合提前报错、#32736 防静默降级加载）</td><td>提案阶段</td><td><strong>capability-gated fail-closed allowlist</strong>——同一思想的生态级版本</td></tr>
+      <tr><td><strong><code>--quantization</code> / <code>--online-quantization</code> 分离</strong>：MXFP8 基础、ROCm MXFP4 路径、FP8 修复已合；Ascend INT8、NVFP4→MXFP4 requant 进行中</td><td>部分落地</td><td><strong>v2 在线量化</strong>（weight_loader 包装）</td></tr>
+      <tr><td>Weight Loader v2（sgl#31051）：demo 已合，PR1–PR9 迁移未完成</td><td>进行中</td><td>我们坚定复用 <code>model.load_weights</code>，无迁移成本</td></tr>
+      <tr><td>RL weight update 时保持 NPU 参数与 loader 元数据（sgl#31796）</td><td>已合</td><td>又一个"补丁清单"病例——契约真空跨生态存在</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note"><strong>对我们的启示：</strong>roadmap 在 PWAL 标准化（含 weight-update 路径）、能力注册 fail-closed、在线量化独立接口三点上与我们独立收敛——方向正确性的最强旁证。但三项在 SGLang 侧都还是 checkbox 或提案；契约方案先在 vLLM 落地，就是这个方向的参考实现。</div>
+
+  <!-- RFC 2 -->
+  <h3>次要 · RFC 2：load_weights 与 completeness check 分离</h3>
+  <div class="card">
+    <div class="card-head"><span class="tag tag-id">sgl#28585</span> <span class="tag tag-status">OPEN · 已收录进 #31783 §1.2</span></div>
+    <div class="card-body">
+      <p><strong>问题：</strong>很多模型的 <code>load_weights()</code> 既加载 tensor 又检查完整性。RL update 分 bucket 发送，第一个 bucket 就触发 "missing weights"（DeepSeek-V3 MTP 的层数检查是典型）。<strong>方案：</strong><code>load_weights</code> 只加载并返回 loaded names，completeness 在所有 bucket 发完后由外部统一检查。</p>
+    </div>
+  </div>
+  <div class="note"><strong>对我们的启示：</strong>这就是 manifest_check（我们的 follow-up scope，不在本轮）。vLLM #49090 同思路——三个项目独立收敛。</div>
+
+  <!-- RFC 3/4/5 一览 -->
+  <h3>一览 · RFC 3 / 4 / 5：不触碰核心设计</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th></th><th>内容</th><th>为什么不展开</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag tag-id">sgl#24703</span><br>RFC 3</td><td>AutoWeightsLoader 统一 165 个模型的 load_weights（基础 LANDED，92/187 迁移中，作者持续推进这类统一工作）</td><td>vLLM 侧这就是现状——AutoWeightsLoader 覆盖 530+ 模型，SGLang 在复制 vLLM 模式。对我们无行动项</td></tr>
+      <tr><td><span class="tag tag-id">sgl#32335</span><br>RFC 4</td><td>跨 TP/PP/EP/DP 异构 resharding（Placement / Binding / TransferPlan 三层抽象）</td><td>传输层雄心，第一版只做 byte-compatible resharding——不触碰 PWAL/derive</td></tr>
+      <tr><td><span class="tag tag-id">sgl#33522</span><br>RFC 5</td><td>Weight Cache Daemon（306s→1s 恢复）；未来 VMM stable VA</td><td>缓存层优化。唯一值得记住的一句：VMM stable VA（物理页换、虚拟地址不变）是 <code>resize_</code>+<code>copy_</code> 的长期替代思路，但依赖 OS/driver；我们的方案更 portable</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- ====== SUMMARY ====== -->
+  <h2>总结：SGLang 在哪里领先，在哪里和我们同步</h2>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>维度</th><th>SGLang 状态</th><th>vLLM / 我们</th></tr></thead>
+    <tbody>
+      <tr><td><strong>restore + PWAL 流程</strong></td><td>Miles fork 生产验证（生态正式路径：条件 restore + 无条件全量 PWAL），<strong>上游化已停滞</strong>（#28565 自动关闭）；主线 RL 裸通道不跑 PWAL，BF16/预量化专用</td><td>我们的核心设计——两个生态中唯一在主线推进的方案</td></tr>
+      <tr><td><strong>PWAL 标准化（含 weight-update 路径）</strong></td><td>roadmap checkbox（#31783 §1.2），未动工</td><td>refresh_derived_state 契约，方案完整</td></tr>
+      <tr><td><strong>能力注册 / fail-early</strong></td><td>提案（#31774）</td><td>capability-gated fail-closed allowlist</td></tr>
+      <tr><td><strong>Completeness check 分离</strong></td><td>RFC 已提（#28585）</td><td>manifest_check（follow-up）</td></tr>
+      <tr><td><strong>在线量化独立接口</strong></td><td>部分落地（MXFP8/ROCm MXFP4 已合）</td><td>v2：weight_loader 包装，参考 Humming</td></tr>
+      <tr><td><strong>AutoWeightsLoader</strong></td><td>92/187 迁移中（#24703）</td><td>vLLM 已有，530+ 模型</td></tr>
+      <tr><td><strong>跨 TP/EP resharding / Cache Daemon / VMM</strong></td><td>RFC / Phase 1 / 提案</td><td>无对等方案——传输/缓存层，不影响核心设计</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>核心判断：</strong>SGLang 生态的正式答案（Miles）与我们画的是<strong>同一条分界线</strong>——checkpoint 格式是 eager/finish 的界面，格式转换与派生刷新全在 finish——差别只在它的 finish 是无条件全量重跑，而主线 RL 裸通道干脆没有 finish。加上 PWAL 标准化（roadmap 明确点名 weight-update 路径）与能力注册 fail-closed 两处 roadmap 收敛，方向正确性的旁证已足够强。但 SGLang 侧的现实是：restore/PWAL 上游化停滞（经验困在 Miles fork），标准化与注册表还是 checkbox 和提案。<strong>"选择性、增量、带契约的 finish"在两个生态都不存在，vLLM 侧先落地就是参考实现。</strong>resharding 和 daemon 是 SGLang 领先的传输/缓存层优化，不影响我们的核心设计。
+  </div>
+</div>

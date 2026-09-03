@@ -38,6 +38,28 @@ class FusedMoEMethodBase(QuantizeMethodBase):
         # completed migration to the new internal MK interface.
         return self.moe_kernel is not None
 
+    def supports_selective_reload(self) -> bool:
+        """Expose an expert kernel's audited in-place refresh capability."""
+        if self.moe_kernel is None:
+            return False
+        experts = self.moe_kernel.fused_experts
+        capability = getattr(experts, "supports_selective_reload", None)
+        return callable(capability) and capability()
+
+    def refresh_derived_state(
+        self,
+        layer: "RoutedExperts",
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Delegate refresh to the selected expert implementation."""
+        if not self.supports_selective_reload():
+            return
+        assert self.moe_kernel is not None
+        self.moe_kernel.fused_experts.refresh_derived_state(
+            layer,
+            updated_parameter_names,
+        )
+
     @property
     def mk_can_overlap_shared_experts(self) -> bool:
         # NOTE(rob): temporary attribute to indicate support for

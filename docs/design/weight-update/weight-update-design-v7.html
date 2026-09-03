@@ -1,0 +1,651 @@
+<title>Weight Update Design v7</title>
+<style>
+  @font-face {
+    font-family: 'Commit';
+    src: local('SF Mono'), local('Cascadia Code'), local('JetBrains Mono'), local('Fira Code'), local('monospace');
+  }
+  :root {
+    --bg: #f7f7f4;
+    --surface: #ffffff;
+    --surface-alt: #f0f0ec;
+    --text: #1c1c28;
+    --text-2: #4a4a5a;
+    --text-3: #7a7a8a;
+    --border: #d8d8e0;
+    --border-light: #e8e8ee;
+    --accent: #1d4ed8;
+    --accent-bg: #eff3ff;
+    --green: #15803d;
+    --green-bg: #f0fdf4;
+    --amber: #b45309;
+    --amber-bg: #fffbeb;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --code-bg: #eeeef2;
+    --code-text: #1c1c28;
+    --tag-copy: #1d4ed8;
+    --tag-copy-bg: #eff3ff;
+    --tag-pwal: #7c3aed;
+    --tag-pwal-bg: #f5f3ff;
+    --tag-derive: #0d9488;
+    --tag-derive-bg: #f0fdfa;
+    --tag-online: #b45309;
+    --tag-online-bg: #fffbeb;
+    --tag-break: #dc2626;
+    --tag-break-bg: #fef2f2;
+    --tag-safe: #15803d;
+    --tag-safe-bg: #f0fdf4;
+    --divider: #e0e0e4;
+    --toc-bg: #f7f7f4;
+    --toc-border: #d8d8e0;
+    --highlight: #fef9c3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111118;
+      --surface: #1a1a24;
+      --surface-alt: #22222e;
+      --text: #e0e0e8;
+      --text-2: #a0a0b0;
+      --text-3: #707080;
+      --border: #333340;
+      --border-light: #2a2a38;
+      --accent: #6b8cff;
+      --accent-bg: #1a2040;
+      --green: #4ade80;
+      --green-bg: #0a2018;
+      --amber: #fbbf24;
+      --amber-bg: #1a1808;
+      --red: #f87171;
+      --red-bg: #1a0808;
+      --code-bg: #252530;
+      --code-text: #e0e0e8;
+      --tag-copy: #6b8cff;
+      --tag-copy-bg: #1a2040;
+      --tag-pwal: #a78bfa;
+      --tag-pwal-bg: #1a1830;
+      --tag-derive: #5eead4;
+      --tag-derive-bg: #0a2020;
+      --tag-online: #fbbf24;
+      --tag-online-bg: #1a1808;
+      --tag-break: #f87171;
+      --tag-break-bg: #1a0808;
+      --tag-safe: #4ade80;
+      --tag-safe-bg: #0a2018;
+      --divider: #2a2a38;
+      --toc-bg: #1a1a24;
+      --toc-border: #333340;
+      --highlight: #332d08;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111118;
+    --surface: #1a1a24;
+    --surface-alt: #22222e;
+    --text: #e0e0e8;
+    --text-2: #a0a0b0;
+    --text-3: #707080;
+    --border: #333340;
+    --border-light: #2a2a38;
+    --accent: #6b8cff;
+    --accent-bg: #1a2040;
+    --green: #4ade80;
+    --green-bg: #0a2018;
+    --amber: #fbbf24;
+    --amber-bg: #1a1808;
+    --red: #f87171;
+    --red-bg: #1a0808;
+    --code-bg: #252530;
+    --code-text: #e0e0e8;
+    --tag-copy: #6b8cff;
+    --tag-copy-bg: #1a2040;
+    --tag-pwal: #a78bfa;
+    --tag-pwal-bg: #1a1830;
+    --tag-derive: #5eead4;
+    --tag-derive-bg: #0a2020;
+    --tag-online: #fbbf24;
+    --tag-online-bg: #1a1808;
+    --tag-break: #f87171;
+    --tag-break-bg: #1a0808;
+    --tag-safe: #4ade80;
+    --tag-safe-bg: #0a2018;
+    --divider: #2a2a38;
+    --toc-bg: #1a1a24;
+    --toc-border: #333340;
+    --highlight: #332d08;
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.62; padding: 2.5rem 1.5rem;
+  }
+  .page { max-width: 860px; margin: 0 auto; }
+
+  h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.15rem; text-wrap: balance; }
+  .subtitle { color: var(--text-3); font-size: 0.82rem; margin-bottom: 0.6rem; }
+  .meta { font-size: 0.72rem; color: var(--text-3); margin-bottom: 2rem; display: flex; gap: 1.5rem; }
+
+  h2 { font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em; margin: 2.5rem 0 0.6rem; padding-top: 1.5rem; border-top: 1px solid var(--divider); text-wrap: balance; }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+  h3 { font-size: 0.92rem; font-weight: 600; margin: 1.4rem 0 0.4rem; color: var(--text); }
+  h4 { font-size: 0.82rem; font-weight: 600; margin: 1rem 0 0.3rem; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.04em; }
+
+  p { margin-bottom: 0.7rem; font-size: 0.84rem; color: var(--text-2); }
+  p strong { color: var(--text); }
+
+  code {
+    font-family: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+    font-size: 0.73rem; background: var(--code-bg); color: var(--code-text);
+    padding: 0.1rem 0.3rem; border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg); border-radius: 6px; padding: 0.8rem 1rem;
+    overflow-x: auto; margin: 0.5rem 0 1rem; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; font-size: 0.72rem; }
+
+  .tag {
+    display: inline-block; padding: 0.08rem 0.35rem; border-radius: 3px;
+    font-size: 0.62rem; font-weight: 600; white-space: nowrap; vertical-align: middle;
+  }
+  .tag-copy { background: var(--tag-copy-bg); color: var(--tag-copy); }
+  .tag-pwal { background: var(--tag-pwal-bg); color: var(--tag-pwal); }
+  .tag-derive { background: var(--tag-derive-bg); color: var(--tag-derive); }
+  .tag-online { background: var(--tag-online-bg); color: var(--tag-online); }
+  .tag-break { background: var(--tag-break-bg); color: var(--tag-break); }
+  .tag-safe { background: var(--tag-safe-bg); color: var(--tag-safe); }
+
+  .tbl-wrap { overflow-x: auto; margin: 0.5rem 0 1.2rem; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+  }
+  thead th {
+    text-align: left; font-weight: 600; padding: 0.4rem 0.5rem;
+    border-bottom: 2px solid var(--border); font-size: 0.68rem;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3);
+    white-space: nowrap;
+  }
+  td { padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border-light); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td code { font-size: 0.68rem; }
+
+  .callout {
+    border-radius: 6px; padding: 0.7rem 0.9rem; margin: 0.8rem 0 1rem;
+    font-size: 0.78rem; line-height: 1.5;
+  }
+  .callout-info { background: var(--accent-bg); border-left: 3px solid var(--accent); color: var(--text-2); }
+  .callout-warn { background: var(--amber-bg); border-left: 3px solid var(--amber); color: var(--text-2); }
+  .callout-ok { background: var(--green-bg); border-left: 3px solid var(--green); color: var(--text-2); }
+  .callout-err { background: var(--red-bg); border-left: 3px solid var(--red); color: var(--text-2); }
+  .callout strong { color: var(--text); }
+
+  .stack-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.6rem 0.8rem; margin: 0.5rem 0;
+    font-size: 0.78rem;
+  }
+  .stack-box + .stack-box { margin-top: -1px; border-top-left-radius: 0; border-top-right-radius: 0; }
+  .stack-box:has(+ .stack-box) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+
+  .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.2rem; height: 1.2rem; border-radius: 50%;
+    font-size: 0.65rem; font-weight: 700;
+    background: var(--surface-alt); color: var(--text-3);
+    margin-right: 0.3rem; flex-shrink: 0;
+  }
+  .num-accent { background: var(--accent); color: #fff; }
+
+  ul, ol { margin: 0.3rem 0 0.8rem; padding-left: 1.3rem; }
+  li { font-size: 0.82rem; color: var(--text-2); margin-bottom: 0.25rem; }
+  li strong { color: var(--text); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin: 0.5rem 0 1rem; }
+  @media (max-width: 640px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .highlight { background: var(--highlight); padding: 0.05rem 0.2rem; border-radius: 2px; }
+
+  details { margin: 0.5rem 0; }
+  summary { font-size: 0.8rem; font-weight: 600; cursor: pointer; color: var(--accent); padding: 0.3rem 0; }
+  details[open] summary { margin-bottom: 0.4rem; }
+
+  .toc {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; padding: 0.8rem 1rem; margin-bottom: 2rem;
+  }
+  .toc-title { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-bottom: 0.4rem; }
+  .toc ol { margin: 0; padding-left: 1.2rem; }
+  .toc li { font-size: 0.78rem; margin-bottom: 0.2rem; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+</style>
+
+<div class="page">
+  <h1>vLLM Weight Update Correctness</h1>
+  <p class="subtitle">Design Document v7 &mdash; 基于源码审计的完整重构方案</p>
+  <div class="meta">
+    <span>2026-08-14</span>
+    <span>inferact.ai</span>
+    <span>基于 88 个 PWAL、181 个 replace_parameter、13 个在线量化实现的源码审计</span>
+  </div>
+
+  <nav class="toc">
+    <div class="toc-title">Contents</div>
+    <ol>
+      <li><a href="#principles">第一性原理与不可动摇的约束</a></li>
+      <li><a href="#landscape">量化格局审计</a></li>
+      <li><a href="#trainers">RL 训练框架发送什么</a></li>
+      <li><a href="#callstack">调用栈设计</a></li>
+      <li><a href="#pwal-audit">PWAL 分类与派生状态（摘要）</a></li>
+      <li><a href="#online-quant">在线量化路径分析</a></li>
+      <li><a href="#edge-cases">Edge Cases：主流模型逐个分析</a></li>
+      <li><a href="#scope">场景覆盖与 v1/v2 Scope</a></li>
+      <li><a href="#impl">实施顺序</a></li>
+    </ol>
+  </nav>
+
+  <!-- ====== 1. PRINCIPLES ====== -->
+  <h2 id="principles">1. 第一性原理与不可动摇的约束</h2>
+
+  <h3>核心约束</h3>
+  <ol>
+    <li><strong><code>data_ptr()</code> 全程不变</strong> &mdash; CUDA graph 已 capture，不重新 capture。所有写入必须用 <code>copy_</code> 或 <code>resize_</code>+<code>copy_</code>，不允许 <code>replace_parameter</code> 创建新 tensor</li>
+    <li><strong>坚定复用 <code>model.load_weights()</code></strong> &mdash; 不绕过 AutoWeightsLoader。530+ 模型的 name routing、TP shard、stacked_params_mapping 全部复用</li>
+    <li><strong>不使用 layerwise</strong> &mdash; 不依赖 meta device restore / materialize / kernel_tensors / online_process_loader</li>
+    <li><strong>永远不考虑 hot-swap</strong> &mdash; 始终 drain &rarr; update &rarr; resume</li>
+  </ol>
+
+  <h3>设计决策</h3>
+  <ul>
+    <li><strong>三个扩展点</strong>：
+      <ul style="margin-top:0.2rem">
+        <li><strong>扩展点 A（weight_loader）</strong>：load 阶段，per-param。六类分派（①②③ eager 完结 / ④⑤⑥ 暂存等 finish），详见 <a href="https://claude.ai/code/artifact/d0e57a92-65e7-4466-8c4b-f727ec1cf4d8" style="color:var(--accent)">Per-Param Copy 分类</a></li>
+        <li><strong>扩展点 B（refresh_derived_state）</strong>：finish 阶段，per-module。新接口，不是 PWAL。契约：in-place、幂等、增量。变换逻辑从 PWAL 提取成纯函数共享。只有 ⑤⑥ 类层实现，其余继承 no-op</li>
+        <li><strong>扩展点 C（restore_weights_before_loading）</strong>：start 阶段，per-module。⑤ 类层把 param 从 runtime 布局恢复回 checkpoint 布局（transpose / resize_ 回原 shape），让 weight_loader 能正常 copy_。每个 quant_method 实现自己的逆操作，默认 no-op。SGLang wNa16 已有此接口</li>
+      </ul>
+    </li>
+    <li><strong>Flag 开关新旧调用栈</strong>：新的 start(C) → load(A) → finish(B) 调用栈通过一个 flag 启用（如 <code>use_new_weight_update=True</code>）。<strong>旧调用栈（直接 <code>load_weights</code> + 无条件重跑 PWAL）仍然保留</strong>，作为 fallback——它能兼容大部分 dtype 匹配 + 无布局变换的场景（①②类）。新调用栈只在 flag 开启时走，逐步验证后切为默认</li>
+    <li><strong>Fail-closed</strong>：dtype 不匹配且无在线量化 loader &rarr; raise error</li>
+  </ul>
+
+  <!-- ====== 2. LANDSCAPE ====== -->
+  <h2 id="landscape">2. 量化格局审计</h2>
+
+  <h3>量化粒度与 Buffer 需求</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>粒度</th><th>Scale 范围</th><th>单 shard 可独立量化？</th><th>代表</th></tr></thead>
+    <tbody>
+      <tr><td>Per-block (128&times;128)</td><td>128&times;128 元素内</td><td><span class="tag tag-safe">YES</span> 块完全落在单 shard 内</td><td>Block FP8, MXFP4, MXFP8</td></tr>
+      <tr><td>Per-group (128)</td><td>128 连续元素</td><td><span class="tag tag-safe">YES</span></td><td>GPTQ, AWQ (group_size=128)</td></tr>
+      <tr><td>Per-channel</td><td>1 行/列</td><td><span class="tag tag-safe">YES</span></td><td>INT8 SmoothQuant</td></tr>
+      <tr><td>Per-tensor</td><td>整个 tensor</td><td><span class="tag tag-online">DEPENDS</span> 非 fused param: yes; fused param (qkv/w13): 需等配对</td><td>FP8 per-tensor (DeepSeek-V3)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout callout-info">
+    <strong>关键发现：</strong>需要 buffer 暂存的 <strong>唯一情况</strong> = per-tensor scale &times; fused param &times; 在线量化。三个条件缺一不可。Block FP8 / per-group / per-channel 完全没有这个问题。<br>
+    详细分析见 <a href="https://claude.ai/code/artifact/e6463868-a8e0-47e1-9962-7556460cb6e5" style="color:var(--accent)">Fused Param Scale Buffer</a>（含 NCCL 到达粒度 vs fused param 的数据流图、逐量化粒度分析、fusing 为什么是通用做法）。
+  </div>
+
+  <h3>vLLM 量化系统规模</h3>
+  <div class="grid-2">
+    <div class="stack-box"><strong>88</strong> 个 <code>process_weights_after_loading</code> 实现</div>
+    <div class="stack-box"><strong>181</strong> 个 <code>replace_parameter</code> 调用</div>
+    <div class="stack-box"><strong>13</strong> 个在线量化 PWAL（<code>online/</code> 目录）</div>
+    <div class="stack-box"><strong>2</strong> 个 noop PWAL（embedding + moe_base）</div>
+  </div>
+
+  <!-- ====== 3. TRAINERS ====== -->
+  <h2 id="trainers">3. RL 训练框架发送什么</h2>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>框架</th><th>发送 dtype</th><th>预量化？</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>veRL</strong></td>
+        <td>BF16</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td><strong>OpenRLHF</strong></td>
+        <td>BF16</td>
+        <td>否</td>
+      </tr>
+      <tr>
+        <td><strong>Miles</strong></td>
+        <td>BF16 或 FP8</td>
+        <td><strong>可选</strong>：FP8 在训练侧量化后发送</td>
+      </tr>
+      <tr>
+        <td><strong>NeMo-RL</strong></td>
+        <td>BF16</td>
+        <td>否</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout callout-ok">
+    <strong>结论：</strong>所有主流框架默认发 BF16。Miles 是唯一支持训练侧预量化的。<strong>v1 只支持 dtype 匹配（BF16&harr;BF16, FP8&harr;FP8），覆盖 95%+ 场景。</strong>
+  </div>
+
+  <!-- ====== 4. CALLSTACK ====== -->
+  <h2 id="callstack">4. 调用栈设计</h2>
+
+  <h4>Start 阶段</h4>
+  <div class="stack-box">
+    <span class="num">0</span> <code>NCCLEngine.start_weight_update()</code><br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      &rarr; drain requests
+    </span>
+  </div>
+  <div class="stack-box" style="border-color:var(--amber);border-width:2px;background:var(--amber-bg)">
+    <span class="num" style="background:var(--amber);color:#fff">C</span> <strong>扩展点 C：restore_weights_before_loading</strong>（per-module）<br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      遍历 <code>model.modules()</code>，对 ⑤ 类层调 <code>quant_method.restore_weights_before_loading(layer)</code>。<br>
+      每个 quant_method 实现自己的逆操作（transpose 回去 / <code>resize_</code> 回原 shape），默认 no-op。<br>
+      <strong>目的：</strong>让 param 恢复成 checkpoint 布局，weight_loader 才能正确工作。
+    </span>
+  </div>
+  <div class="callout callout-info" style="margin-top:0.6rem">
+    <strong>为什么需要 restore——weight_loader 只认 checkpoint 布局：</strong><code>weight_loader</code> 在 <code>create_weights</code> 时被设定好（<code>output_dim=0, input_dim=1</code>），之后<strong>永远按 checkpoint 布局的规则</strong>计算 TP shard offset 和 copy_ 位置。它不知道 PWAL 后来做了什么变换，也没有任何机制更新自己的标记。例如 FP8 per-tensor dense 的 PWAL 把 <code>[N, K]</code> transpose 成 <code>[K, N]</code>，但 <code>output_dim</code> 还是 0——update 时 trainer 发 <code>[N, K]</code> 的 tensor，weight_loader 按旧标记沿 dim=0 切 shard，往 <code>[K, N]</code> 的 param 里 copy_，shape 不匹配直接报错。restore 把 param 变回 weight_loader 认识的布局，weight_loader 不需要任何改动。
+  </div>
+
+  <h4>Receive 阶段</h4>
+  <div class="stack-box">
+    <span class="num">1</span> <code>NCCLEngine.receive_weights(update_info)</code><br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      &rarr; NCCL broadcast 接收 tensor
+    </span>
+  </div>
+  <div class="stack-box">
+    <span class="num">2</span> <code>model.load_weights([(name, weight)])</code><br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      &rarr; AutoWeightsLoader: checkpoint name &rarr; param routing（stacked_params / expert_params）<br>
+      &rarr; 调 <code>param.weight_loader(param, loaded_weight, ...)</code>
+    </span>
+  </div>
+  <div class="stack-box" style="border-color:var(--accent);border-width:2px;background:var(--accent-bg)">
+    <span class="num num-accent">A</span> <strong>扩展点 A：weight_loader</strong>（per-param）<br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      冷启动时已绑定在 param 上，weight update 时直接复用。按到达格式 vs param 格式的差异分六类（①②③ eager 完结 / ④⑤⑥ 暂存等 finish）。<br>
+      详见 <a href="https://claude.ai/code/artifact/d0e57a92-65e7-4466-8c4b-f727ec1cf4d8" style="color:var(--accent)">Per-Param Copy 分类</a>。
+    </span>
+  </div>
+
+  <h4>Finish 阶段</h4>
+  <div class="stack-box" style="border-color:var(--green);border-width:2px;background:var(--green-bg)">
+    <span class="num" style="background:var(--green);color:#fff">B</span> <strong>扩展点 B：refresh_derived_state</strong><br>
+    <span style="font-size:0.76rem;color:var(--text-2)">
+      <strong>做什么：</strong>扫一遍模型所有层，每层调 <code>refresh_derived_state()</code>。这是一个<strong>新接口</strong>，不是 PWAL。<br><br>
+
+      <strong>三个分支（冷启动定死，运行时只查表）：</strong><br>
+      &bull; <strong>大多数层</strong> &rarr; <code>return</code>，什么都不做。copy 阶段已经是终态。 <span class="tag tag-safe">NOOP</span><br>
+      &bull; <strong>格式转换层</strong>（⑤ 类：Marlin / DEEPGEMM / FLASHINFER_TRTLLM / AITER）&rarr; 读出 copy 阶段存进去的 checkpoint 格式数据，调共享的变换纯函数重新排列，<code>resize_</code>+<code>copy_</code> 写回 runtime 布局。不重建 kernel。 <span class="tag tag-pwal">复用 PWAL 变换逻辑</span><br>
+      &bull; <strong>派生状态</strong>（⑥ 类）&rarr; 从已更新的 param 本体重新计算二级张量，<code>copy_</code> 进预分配好的位置。 <span class="tag tag-derive">DERIVE</span><br>
+      &nbsp;&nbsp;&nbsp;&nbsp;W_UK_T / W_UV &larr; kv_b_proj（MLA 投影矩阵）<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;_g1_alphas &larr; w1_scale &times; a1_scale（MoE 融合系数）<br>
+      &nbsp;&nbsp;&nbsp;&nbsp;mHC broadcast / HPC norm（DS4 广播副本）
+    </span>
+  </div>
+  <div class="callout callout-info" style="margin-top:0.6rem">
+    <strong>为什么是新接口而不是重跑 PWAL：</strong>PWAL 的契约允许重分配 tensor、重建 kernel、不保证幂等——这些在 update 时全是 bug 来源（<a href="https://claude.ai/code/artifact/b90bc156-90c1-46cb-ba68-08a44bead1ed" style="color:var(--accent)">PWAL 管道 ch4</a> 有完整证据）。<code>refresh_derived_state</code> 的契约从出生就是 <strong>in-place、幂等、增量</strong>。变换逻辑从 PWAL 提取成纯函数，两个入口共享计算代码、各自用不同的写回方式（PWAL 用 <code>replace_parameter</code>，refresh 用 <code>copy_</code>）。只有需要 finish 做事的层才实现它，其余层继承默认的 no-op。
+  </div>
+
+  <!-- ====== 5. PWAL / DERIVED SUMMARY ====== -->
+  <h2 id="pwal-audit">5. PWAL 分类与派生状态（摘要）</h2>
+
+  <p>88 个 PWAL 实现按 finish 分支全量归类：<strong>约 40 个</strong>纯委派/noop（finish 零动作，eager copy_ 即终态）、<strong>约 35 个</strong>格式转换（update 模式复用转换代码，<code>prefer_copy</code> / restore + <code>resize_</code>+<code>copy_</code>）、<strong>约 5 个</strong> derived-only + 挂载点 ②③④ 全部（refresh 重算）、<strong>13 个</strong>在线量化（v1 fail-closed，v2 迁入 weight_loader 包装）。逐实现普查表、派生状态完整清单（W_UK_T/W_UV、W_K、W_UK_T_dcp_qrep、_g1_alphas、HPC norm、mHC broadcast）与完整论证见 <a href="https://claude.ai/code/artifact/b90bc156-90c1-46cb-ba68-08a44bead1ed" style="color:var(--accent)">PWAL 管道 · 第四章 4.5「全量普查」</a>。</p>
+
+  <div class="callout callout-warn">
+    <strong>影响设计的两个硬结论保留在此：</strong><br>
+    <strong>①</strong> 格式转换操作的是整个 fused tensor（<code>w13_weight</code> 含全部 expert），必须等所有权重到齐——<strong>不能 eager</strong>，这是 finish 阶段存在的根本理由。<br>
+    <strong>②</strong> MLA 派生有 3 条路径（BF16 / MXFP4 / FP8），refresh 按 backend 分派，复用 <code>_derive_absorbed_attention</code>；派生链有两级（<code>W_UK_T_dcp_qrep</code> ← <code>W_UK_T</code>），刷新按依赖顺序。
+  </div>
+
+  <!-- ====== 6. ONLINE QUANT ====== -->
+  <h2 id="online-quant">6. 在线量化路径分析</h2>
+
+  <h3>现有机制的局限</h3>
+  <p>vLLM 现有的在线量化（<code>vllm/model_executor/layers/quantization/online/</code>）<strong>量化逻辑全在 PWAL 里，不在 weight_loader 里</strong>。冷启动流程：</p>
+  <pre><code>create_weights  &rarr; BF16 param（无包装）
+load_weights    &rarr; weight_loader 原封不动，BF16 copy_ 进 BF16 param
+PWAL            &rarr; BF16 &rarr; FP8/NVFP4/INT8（replace_parameter）</code></pre>
+  <p>PWAL 之后 param 变成 FP8。Weight update 时 trainer 发 BF16 &rarr; <code>copy_</code> 进 FP8 param &rarr; dtype mismatch &rarr; 失败。</p>
+
+  <h3>现有 weight_loader 包装</h3>
+  <p>vLLM 已有的 weight_loader 包装<strong>都不是在线量化</strong>：</p>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>包装</th><th>位置</th><th>做什么</th><th>是在线量化？</th></tr></thead>
+    <tbody>
+      <tr><td><code>MoeWNA16Method.get_weight_loader</code></td><td><code>moe_wna16.py:520</code></td><td>AWQ/GPTQ INT4 bit repack</td><td>No，格式转换</td></tr>
+      <tr><td><code>Mxfp4MoEMethod.get_scale_weight_loader</code></td><td><code>mxfp4.py:623</code></td><td>MXFP4 scale 路由</td><td>No，scale 路由</td></tr>
+      <tr><td><code>make_online_process_loader</code></td><td><code>layerwise.py:146</code></td><td>buffer &rarr; materialize &rarr; PWAL</td><td>Yes，但是重量级 layerwise</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>v2 方案：轻量 weight_loader 包装</h3>
+  <p>在 <code>create_weights</code> 时永久包装 weight_loader，加入在线量化逻辑：</p>
+  <pre><code>def fp8_block_online_loader(param, loaded_weight, **kwargs):
+    if loaded_weight.dtype == param.dtype:
+        original_loader(param, loaded_weight, **kwargs)  # FP8&rarr;FP8
+    else:
+        fp8_data, scale = per_block_cast_to_fp8(loaded_weight)  # BF16&rarr;FP8
+        original_loader(param, fp8_data, **kwargs)
+        copy_scale(param, scale, **kwargs)</code></pre>
+
+  <div class="callout callout-ok">
+    <strong>Block FP8 在线量化可以零 buffer 实现：</strong>每个 shard 到达就独立量化（block scale 是局部的）。冷启动和 weight update 共用一个 loader。不需要 PWAL，不需要 layerwise，不需要 buffer。<br><br>
+    <strong>Per-tensor FP8 在线量化需要 buffer：</strong>fused param（qkv_proj, w13_weight）的 per-tensor scale 需要全部 shard 到齐才能算 <code>absmax</code>。Per-tensor FP8 已经很少使用（主流是 block FP8），可 defer 或用 SGLang 的 w1+w3 闭包 buffer 模式。
+  </div>
+
+  <!-- ====== 8. EDGE CASES ====== -->
+  <h2 id="edge-cases">7. Edge Cases：主流模型逐个分析</h2>
+
+  <h3>DeepSeek-V3 / R1（MLA + FP8 MoE）</h3>
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>组件</th><th>Weight Update 行为</th><th>需要什么</th></tr></thead>
+    <tbody>
+      <tr><td>Attention kv_b_proj</td><td><code>copy_</code> 进 kv_b_proj param</td><td>finish 时 refresh W_UK_T / W_UV</td></tr>
+      <tr><td>Attention q/o proj</td><td><code>copy_</code></td><td>无</td></tr>
+      <tr><td>MoE w13/w2（block FP8）</td><td><code>copy_</code>（checkpoint layout = runtime layout for block FP8）</td><td>无</td></tr>
+      <tr><td>MoE w13/w2（per-tensor FP8）</td><td><code>copy_</code> + finish 时 kernel shuffle via PWAL</td><td>restore &rarr; copy_ &rarr; PWAL (w1+w3 scale requantize + kernel shuffle)</td></tr>
+      <tr><td><code>_g1_alphas</code>（per-tensor 路径）</td><td>—</td><td>finish 时 refresh</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout callout-warn">
+    <strong>Block FP8 vs Per-tensor FP8 的关键区别：</strong>Block FP8 的 PWAL 不 transpose weight（<code>fp8.py:400</code> 附近），不调 <code>process_fp8_weight_tensor_strategy</code>。所以 block FP8 MoE 的 checkpoint layout = runtime layout，<strong>直接 copy_ 就行</strong>。Per-tensor FP8 需要 transpose + scale requantize + kernel shuffle，必须走 PWAL。
+  </div>
+
+  <h3>DeepSeek-V4-Pro（MLA + FP4 MoE，per-expert 独立存储）</h3>
+  <ul>
+    <li>Expert 独立存储（<code>experts.{i}.w1/w2/w3</code>），<strong>不 fuse w13</strong></li>
+    <li>每个 expert 是独立 tensor，在线量化可以 eager 逐 tensor 做</li>
+    <li>不存在 w1+w3 配对问题</li>
+    <li>MLA 派生同 V3</li>
+  </ul>
+
+  <h3>Kimi K3（MLA + Latent MoE）</h3>
+  <ul>
+    <li>MLA 派生同 V3（共享 <code>_derive_absorbed_attention</code>）</li>
+    <li>Latent MoE 可能有额外的 prefill/decode 派生权重</li>
+    <li>如果用 sleep mode（MNNVL fabric），weight update 后需要重新同步 KV state</li>
+  </ul>
+
+  <h3>Llama / Qwen（Dense FFN, BF16）</h3>
+  <ul>
+    <li>最简单的 case：所有权重 <code>copy_</code>，无 PWAL，无派生</li>
+    <li>fused <code>gate_up_proj</code> 和 <code>qkv_proj</code> 通过 stacked_params_mapping 自动路由</li>
+  </ul>
+
+  <h3>Mixtral / Qwen3-MoE（FP8 MoE，fused w13）</h3>
+  <ul>
+    <li>fused <code>w13_weight</code> 格式</li>
+    <li>Block FP8：直接 <code>copy_</code></li>
+    <li>Per-tensor FP8：需要 PWAL（同 V3）</li>
+    <li>INT4/Marlin：需要 restore &rarr; copy_ &rarr; PWAL repack（shape 变化）</li>
+  </ul>
+
+  <h3>Mamba / Jamba（State-space models）</h3>
+  <ul>
+    <li>Mamba 有自定义 weight_loader（<code>mamba_mixer2.py:434</code>）</li>
+    <li>conv1d 权重有特殊 sharding</li>
+    <li>RL 场景中 Mamba 模型极少见，可暂不考虑</li>
+  </ul>
+
+  <!-- ====== 8. SCOPE ====== -->
+  <h2 id="scope">8. 场景覆盖与 v1/v2 Scope</h2>
+
+  <h3>v1：trainer 发送的 dtype 与 param 匹配</h3>
+  <p>覆盖 95%+ 的 RL 场景（veRL/OpenRLHF 发 BF16,Miles 发预量化 FP8）。按 <a href="https://claude.ai/code/artifact/d0e57a92-65e7-4466-8c4b-f727ec1cf4d8" style="color:var(--accent)">Per-Param 六类分类</a>，v1 处理 ①②⑤⑥：</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>场景</th><th>Per-Param 类型</th><th>C (restore)</th><th>A (weight_loader)</th><th>B (refresh)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>BF16 dense/MoE</td>
+        <td>①</td>
+        <td>&mdash;</td>
+        <td><code>copy_</code></td>
+        <td>return</td>
+      </tr>
+      <tr>
+        <td>Block FP8 + Triton/CUTLASS</td>
+        <td>①</td>
+        <td>&mdash;</td>
+        <td><code>copy_</code></td>
+        <td>return</td>
+      </tr>
+      <tr>
+        <td>Block FP8 + DEEPGEMM/FLASHINFER/AITER</td>
+        <td>⑤</td>
+        <td>restore 布局</td>
+        <td><code>copy_</code></td>
+        <td>重排回 runtime 布局</td>
+      </tr>
+      <tr>
+        <td>Per-tensor FP8 dense</td>
+        <td>⑤</td>
+        <td>transpose 回 [N,K]</td>
+        <td><code>copy_</code></td>
+        <td>transpose 回 [K,N]</td>
+      </tr>
+      <tr>
+        <td>INT4/Marlin repack</td>
+        <td>⑤</td>
+        <td>resize_ 回原 shape</td>
+        <td><code>copy_</code></td>
+        <td>Marlin repack</td>
+      </tr>
+      <tr>
+        <td>MLA（DeepSeek V2/V3/R1, K3）</td>
+        <td>⑥</td>
+        <td>&mdash;</td>
+        <td><code>copy_</code> kv_b_proj</td>
+        <td>重算 W_UK_T / W_UV</td>
+      </tr>
+      <tr>
+        <td>dtype 不匹配 + 无在线量化 flag</td>
+        <td>&mdash;</td>
+        <td colspan="3" style="text-align:center"><code>raise ValueError</code> <span class="tag tag-break">FAIL-CLOSED</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>v2：trainer 发送 BF16,engine 侧在线量化</h3>
+  <p>在 <code>create_weights</code> 时包装 weight_loader,加入量化逻辑。处理 ③④ 类。</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <thead><tr><th>场景</th><th>Per-Param 类型</th><th>A (weight_loader)</th><th>B (refresh)</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Block FP8 在线量化</td>
+        <td>③</td>
+        <td>包装 loader：per-block 量化 + <code>copy_</code></td>
+        <td>return</td>
+      </tr>
+      <tr>
+        <td>NVFP4 在线量化</td>
+        <td>③ (w2) / ④ (w1+w3)</td>
+        <td>包装 loader：w2 直接量化；w1+w3 per-expert eager 缓冲</td>
+        <td>return</td>
+      </tr>
+      <tr>
+        <td>Per-tensor FP8 在线量化</td>
+        <td>④</td>
+        <td>包装 loader：per-expert eager 缓冲</td>
+        <td>return</td>
+      </tr>
+      <tr>
+        <td>MXFP4 / MXFP8 / INT8</td>
+        <td>③</td>
+        <td>包装 loader：per-block/channel 量化 + <code>copy_</code></td>
+        <td>return</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout callout-info">
+    <strong>v2 对 v1 零侵入：</strong>包装 loader 在 <code>create_weights</code> 时绑定到 param 上,<code>model.load_weights</code> 调 <code>param.weight_loader</code> 时自动走包装逻辑。v1 的三个扩展点（C/A/B）完全不需要修改。
+  </div>
+
+  <!-- ====== 11. NEW FINDINGS ====== -->
+  <!-- ====== 10. IMPL ====== -->
+  <h2 id="impl">10. 实施顺序</h2>
+
+  <h3>Phase 0: 前置改动（CUDA graph 安全）</h3>
+  <ol>
+    <li>Shape-changing PWAL 的 <code>replace_parameter</code> &rarr; <code>resize_</code>+<code>copy_</code>
+      <ul>
+        <li>加 <code>_original_shapes</code> 记录（create_weights 时）</li>
+        <li>加 <code>is_converted</code> guard（PWAL 幂等性）</li>
+        <li>加 <code>restore_weights_before_loading</code>（resize_ 回 checkpoint shape）</li>
+        <li>参考 SGLang <code>compressed_tensors_wNa16_moe.py</code></li>
+      </ul>
+    </li>
+    <li>MLA <code>_derive_absorbed_attention</code> 中的 <code>replace_parameter</code> 已有 <code>prefer_copy=True</code>，验证 data_ptr 是否真的不变</li>
+  </ol>
+
+  <h3>Phase 1: 核心重构</h3>
+  <ol start="3">
+    <li><code>NCCLEngine.start_weight_update</code>：改为选择性 restore（非 layerwise init）</li>
+    <li><code>NCCLEngine.finish_weight_update</code>：改为统一调 <code>refresh_derived_state</code>（内部三分支 dispatch：noop / PWAL 代码复用 update 模式 / 派生重算）</li>
+    <li>新增 <code>refresh_derived_state</code> 实现（MLAAttention 3 条路径、TrtLlmFp8MoE）</li>
+    <li>MTP completeness check 从 <code>load_weights</code> 内部移出</li>
+    <li>删除 layerwise 在 WTE 路径中的调用</li>
+  </ol>
+
+  <h3>Phase 2: 在线量化（v2）</h3>
+  <ol start="8">
+    <li>Block FP8 在线量化 weight_loader 包装（<code>Fp8BlockOnlineMethod</code> 或等效）</li>
+    <li>Per-tensor FP8 fused param buffer 逻辑</li>
+    <li>NVFP4 weight_loader 包装（参考 SGLang <code>nvfp4_online_weight_loader</code>）</li>
+  </ol>
+
+  <h3>Phase 3: 验证</h3>
+  <ol start="11">
+    <li>BF16 dense（Llama）：cold start &rarr; weight update &rarr; verify output</li>
+    <li>BF16 MoE（Mixtral）：cold start &rarr; weight update &rarr; verify output</li>
+    <li>Block FP8 MoE（DeepSeek-V3）：cold start &rarr; weight update &rarr; verify output</li>
+    <li>MLA 模型：verify W_UK_T / W_UV refresh correctness</li>
+    <li>CUDA graph safety：verify data_ptr unchanged after full update cycle</li>
+  </ol>
+
+  <p style="margin-top:1.5rem;font-size:0.78rem;color:var(--text-3)"><strong>Follow-up：</strong>manifest_check（校验所有权重是否到齐）作为后续工作单独实现，不在本轮 scope 内。</p>
+</div>
+

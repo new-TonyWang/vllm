@@ -1,0 +1,741 @@
+<title>CUDA Graph Refit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&family=Playfair+Display:wght@700;800&display=swap">
+
+<style>
+/* ── Tokens ── */
+:root {
+  --bg: #faf8f5;
+  --surface: #f0ede7;
+  --surface-code: #eae6df;
+  --text: #1c1e22;
+  --text-secondary: #51564e;
+  --text-muted: #7d8175;
+  --accent: #b44d1e;
+  --accent-light: #e8ddd4;
+  --border: #cdc7bb;
+  --border-light: #ddd8cf;
+  --risk-bg: #fdf0ec;
+  --risk-border: #e2a08a;
+  --insight-bg: #eef3ea;
+  --insight-border: #9aac89;
+  --code-keyword: #8b5e34;
+  --code-comment: #8a8d7f;
+  --code-string: #5a7d4a;
+  --code-fn: #6b4f8a;
+  --diagram-stroke: #51564e;
+  --diagram-fill: #eae6df;
+  --diagram-accent: #b44d1e;
+  --diagram-text: #1c1e22;
+  --diagram-muted: #7d8175;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #191b1f;
+    --surface: #23262b;
+    --surface-code: #282c32;
+    --text: #e2dfd8;
+    --text-secondary: #b0ada5;
+    --text-muted: #7f7c75;
+    --accent: #d4743e;
+    --accent-light: #342a22;
+    --border: #3a3d42;
+    --border-light: #2f3237;
+    --risk-bg: #2d2220;
+    --risk-border: #7a4a3a;
+    --insight-bg: #222820;
+    --insight-border: #4a5c3e;
+    --code-keyword: #c49060;
+    --code-comment: #6d7066;
+    --code-string: #7fa86a;
+    --code-fn: #9e82ba;
+    --diagram-stroke: #b0ada5;
+    --diagram-fill: #282c32;
+    --diagram-accent: #d4743e;
+    --diagram-text: #e2dfd8;
+    --diagram-muted: #7f7c75;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #191b1f;
+  --surface: #23262b;
+  --surface-code: #282c32;
+  --text: #e2dfd8;
+  --text-secondary: #b0ada5;
+  --text-muted: #7f7c75;
+  --accent: #d4743e;
+  --accent-light: #342a22;
+  --border: #3a3d42;
+  --border-light: #2f3237;
+  --risk-bg: #2d2220;
+  --risk-border: #7a4a3a;
+  --insight-bg: #222820;
+  --insight-border: #4a5c3e;
+  --code-keyword: #c49060;
+  --code-comment: #6d7066;
+  --code-string: #7fa86a;
+  --code-fn: #9e82ba;
+  --diagram-stroke: #b0ada5;
+  --diagram-fill: #282c32;
+  --diagram-accent: #d4743e;
+  --diagram-text: #e2dfd8;
+  --diagram-muted: #7f7c75;
+}
+
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 15.5px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout ── */
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 3.5rem 1.5rem 5rem;
+}
+
+@media (max-width: 520px) {
+  .page { padding: 2rem 1rem 3rem; }
+}
+
+/* ── Header ── */
+.page-header {
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.page-header h1 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 800;
+  font-size: 2.1rem;
+  line-height: 1.2;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  margin-bottom: 0.6rem;
+}
+
+.page-header .subtitle {
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  max-width: 580px;
+}
+
+.meta-line {
+  display: flex;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+  margin-top: 0.9rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Sections ── */
+section {
+  margin-bottom: 2.8rem;
+}
+
+h2 {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+  font-size: 1.15rem;
+  color: var(--text);
+  margin-bottom: 1rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--border-light);
+  letter-spacing: 0.005em;
+}
+
+h3 {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+  margin-top: 1.6rem;
+  margin-bottom: 0.6rem;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+p {
+  margin-bottom: 0.9rem;
+  color: var(--text-secondary);
+}
+
+p strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ── Callouts ── */
+.callout {
+  padding: 1rem 1.2rem;
+  border-radius: 4px;
+  margin-bottom: 1.2rem;
+  font-size: 0.92rem;
+  line-height: 1.65;
+}
+
+.callout p:last-child { margin-bottom: 0; }
+
+.callout-risk {
+  background: var(--risk-bg);
+  border-left: 3px solid var(--risk-border);
+}
+
+.callout-insight {
+  background: var(--insight-bg);
+  border-left: 3px solid var(--insight-border);
+}
+
+.callout-label {
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+/* ── Code ── */
+code {
+  font-family: 'IBM Plex Mono', 'Menlo', monospace;
+  font-size: 0.88em;
+  background: var(--surface-code);
+  padding: 0.15em 0.35em;
+  border-radius: 3px;
+  color: var(--text);
+}
+
+pre {
+  background: var(--surface-code);
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.2rem;
+  overflow-x: auto;
+  line-height: 1.6;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.84rem;
+}
+
+.kw { color: var(--code-keyword); }
+.cm { color: var(--code-comment); font-style: italic; }
+.st { color: var(--code-string); }
+.fn { color: var(--code-fn); }
+
+/* ── Tables ── */
+.table-wrap {
+  overflow-x: auto;
+  margin-bottom: 1.2rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 0.55rem 0.8rem;
+  border-bottom: 2px solid var(--border);
+}
+
+td {
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  vertical-align: top;
+}
+
+td code {
+  font-size: 0.82em;
+  white-space: nowrap;
+}
+
+/* ── Diagram ── */
+.diagram-wrap {
+  margin: 1.5rem 0;
+  display: flex;
+  justify-content: center;
+}
+
+.diagram-wrap svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── Flow list ── */
+.flow-list {
+  list-style: none;
+  padding: 0;
+  margin-bottom: 1.2rem;
+}
+
+.flow-list li {
+  display: flex;
+  gap: 0.8rem;
+  align-items: flex-start;
+  padding: 0.5rem 0;
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+.flow-list li + li {
+  border-top: 1px solid var(--border-light);
+}
+
+.flow-step {
+  flex-shrink: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  background: var(--accent-light);
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.1rem;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* ── Source refs ── */
+.src {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ── Comparison ── */
+.compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+}
+
+@media (max-width: 560px) {
+  .compare { grid-template-columns: 1fr; }
+}
+
+.compare-card {
+  background: var(--surface);
+  border: 1px solid var(--border-light);
+  border-radius: 5px;
+  padding: 1rem 1.1rem;
+}
+
+.compare-card h4 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.compare-card p {
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin-bottom: 0;
+}
+
+/* ── File ref blocks ── */
+.file-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1.2rem;
+}
+
+.file-ref {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  font-size: 0.88rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.file-ref:last-child { border-bottom: none; }
+
+.file-path {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--accent);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.file-desc {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* ── Footer ── */
+.page-footer {
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+</style>
+
+<div class="page">
+
+  <!-- ═══ Header ═══ -->
+  <header class="page-header">
+    <h1>CUDA Graph 权重更新与 Refit 机制</h1>
+    <p class="subtitle">
+      vLLM 如何在不重新捕获 CUDA graph 的前提下完成模型权重热更新——原理、CUDA 原生 API 对比、vLLM 实现路径、以及正确性约束。
+    </p>
+    <div class="meta-line">
+      <span>基于 vllm@main 2026-08</span>
+      <span>Weight Update Correctness 项目</span>
+    </div>
+  </header>
+
+  <!-- ═══ §1 问题背景 ═══ -->
+  <section>
+    <h2>Graph 捕获了什么</h2>
+    <p>
+      <code>torch.cuda.CUDAGraph</code> 在 capture 阶段记录一条完整的 GPU kernel launch 序列。每个 kernel node 会 bake-in 它的全部参数，包括所有 tensor 的 <strong>device pointer</strong>（<code>data_ptr()</code>）。replay 时，GPU 严格按照相同的 kernel 序列、相同的参数、相同的地址去读写显存。
+    </p>
+    <p>
+      这意味着：如果一个 tensor 的内容变了但地址没变，graph replay 会自动读到新数据。如果地址变了，graph 会从旧地址读取——产生静默的正确性 bug。
+    </p>
+    <div class="callout callout-insight">
+      <div class="callout-label">核心推论</div>
+      <p>
+        权重更新要和 CUDA graph 共存，只有两条路：<strong>保证地址不变</strong>（graph 不用动），或者<strong>更新 graph 内的地址</strong>（用 CUDA 原生 API）。
+      </p>
+    </div>
+  </section>
+
+  <!-- ═══ §2 CUDA 原生 API ═══ -->
+  <section>
+    <h2>CUDA 提供的 Graph 更新 API</h2>
+    <p>
+      CUDA runtime 确实提供了正式的 graph 更新接口。核心有两个层级：
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>API</th>
+            <th>粒度</th>
+            <th>作用</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>cudaGraphExecUpdate</code></td>
+            <td>整图</td>
+            <td>用一个拓扑相同的新 graph 替换旧 executable graph 的全部节点参数</td>
+          </tr>
+          <tr>
+            <td><code>cudaGraphExecKernelNodeSetParams</code></td>
+            <td>单节点</td>
+            <td>直接修改已实例化 graph 中某个 kernel node 的参数（包括指针）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      使用这些 API，即使 tensor 被重新分配到了新地址，也可以把 graph 内 bake-in 的旧指针更新为新指针，<strong>不需要重新 instantiate</strong>。约束是 graph 拓扑（节点类型、数量、依赖关系）必须保持一致。
+    </p>
+    <p>
+      然而 <strong>PyTorch 没有暴露这些接口</strong>。<code>torch.cuda.CUDAGraph</code> 只提供 <code>capture</code> / <code>replay</code> / <code>reset</code>，没有 node 级别的参数更新。要用就必须走底层 C API 或自行 pybind。
+    </p>
+  </section>
+
+  <!-- ═══ §3 vLLM 的选择 ═══ -->
+  <section>
+    <h2>vLLM 的方案：地址稳定 + copy_()</h2>
+    <p>
+      vLLM 选择了更简单的路径：<strong>强制权重 tensor 的地址永远不变</strong>，用 <code>param.data.copy_(new_data)</code> 原地写入新数据。由于 <code>copy_()</code> 不改变 <code>data_ptr()</code>，已捕获的 CUDA graph 自动读到新权重，零额外开销。
+    </p>
+
+    <div class="compare">
+      <div class="compare-card">
+        <h4>CUDA 原生方案</h4>
+        <p>地址可以变 → 用 <code>cudaGraphExecKernelNodeSetParams</code> 更新 graph 里的指针</p>
+      </div>
+      <div class="compare-card">
+        <h4>vLLM 方案</h4>
+        <p>强制地址不变（<code>copy_()</code>）→ graph 什么都不用动</p>
+      </div>
+    </div>
+
+    <h3>为什么不用 CUDA 原生 API</h3>
+    <ol class="flow-list">
+      <li>
+        <span class="flow-step">1</span>
+        <span><strong>节点遍历成本高</strong>。piecewise 模式下一个 forward 捕获几十个子 graph，每个 graph 内部有大量 kernel node，逐个定位哪些 node 引用了哪些权重指针非常复杂。</span>
+      </li>
+      <li>
+        <span class="flow-step">2</span>
+        <span><strong>PyTorch 未暴露接口</strong>。<code>torch.cuda.CUDAGraph</code> 没有 node-level 的参数更新 API，使用 CUDA C API 需要额外 pybind 绑定和维护负担。</span>
+      </li>
+      <li>
+        <span class="flow-step">3</span>
+        <span><strong>copy_() 已经足够</strong>。通过 layerwise reload 机制可以完全控制内存分配，保证地址稳定，所以没有必要引入额外复杂度。</span>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ═══ §4 Refit 的实际含义 ═══ -->
+  <section>
+    <h2>"Refit" 在 vLLM 中的实际含义</h2>
+    <p>
+      vLLM 代码中出现的 "refit" 一词<strong>不是</strong>指 CUDA graph 的某个更新接口，而是一个约定俗成的名字，描述的行为是：
+    </p>
+
+    <div class="diagram-wrap">
+      <svg viewBox="0 0 640 210" width="640" xmlns="http://www.w3.org/2000/svg" style="font-family: 'IBM Plex Mono', monospace;">
+        <!-- boxes -->
+        <rect x="20" y="20" width="180" height="54" rx="4" fill="var(--diagram-fill)" stroke="var(--diagram-stroke)" stroke-width="1.2"/>
+        <text x="110" y="42" text-anchor="middle" fill="var(--diagram-text)" font-size="11" font-weight="500">权重 tensor (param)</text>
+        <text x="110" y="58" text-anchor="middle" fill="var(--diagram-muted)" font-size="10">addr: 0x7f12340...</text>
+
+        <rect x="240" y="20" width="160" height="54" rx="4" fill="var(--diagram-fill)" stroke="var(--diagram-stroke)" stroke-width="1.2"/>
+        <text x="320" y="42" text-anchor="middle" fill="var(--diagram-text)" font-size="11" font-weight="500">新权重数据</text>
+        <text x="320" y="58" text-anchor="middle" fill="var(--diagram-muted)" font-size="10">from checkpoint</text>
+
+        <rect x="440" y="20" width="180" height="54" rx="4" fill="var(--diagram-fill)" stroke="var(--diagram-accent)" stroke-width="1.8"/>
+        <text x="530" y="42" text-anchor="middle" fill="var(--diagram-text)" font-size="11" font-weight="500">param.data.copy_(new)</text>
+        <text x="530" y="58" text-anchor="middle" fill="var(--diagram-accent)" font-size="10" font-weight="500">addr 不变 ✓</text>
+
+        <!-- arrows -->
+        <line x1="200" y1="47" x2="236" y2="47" stroke="var(--diagram-stroke)" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <line x1="400" y1="47" x2="436" y2="47" stroke="var(--diagram-stroke)" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- CUDA graph box -->
+        <rect x="20" y="120" width="600" height="70" rx="4" fill="var(--diagram-fill)" stroke="var(--diagram-stroke)" stroke-width="1.2" stroke-dasharray="5,3"/>
+        <text x="40" y="145" fill="var(--diagram-muted)" font-size="10" font-weight="500">CAPTURED CUDA GRAPH</text>
+        <text x="40" y="165" fill="var(--diagram-text)" font-size="11">kernel_launch(fn=gemm, args=[..., <tspan fill="var(--diagram-accent)" font-weight="500">0x7f12340...</tspan>, ...])</text>
+        <text x="40" y="180" fill="var(--diagram-muted)" font-size="10">→ replay 时从同一地址读取，自动获取新权重数据</text>
+
+        <!-- vertical connection -->
+        <line x1="110" y1="74" x2="110" y2="117" stroke="var(--diagram-accent)" stroke-width="1.2" stroke-dasharray="4,3"/>
+        <text x="120" y="100" fill="var(--diagram-accent)" font-size="10">same ptr</text>
+
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--diagram-stroke)"/>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ═══ §5 Layerwise Reload ═══ -->
+  <section>
+    <h2>Layerwise Reload：如何保证地址稳定</h2>
+    <p>
+      地址稳定不是自动的——需要一套精心设计的 reload 编排来强制执行。核心流程在 <code>layerwise.py</code> 中：
+    </p>
+
+    <ol class="flow-list">
+      <li>
+        <span class="flow-step">1</span>
+        <span><strong><code>initialize_layerwise_reload(model)</code></strong><br>
+        遍历每层，保存当前 parameter 和 buffer 的<strong>原始引用</strong>（<code>kernel_tensors</code>）。这些对象的 <code>data_ptr()</code> 就是 CUDA graph 里 bake-in 的地址。然后将 layer 移到 meta device，释放临时空间给新权重加载用。</span>
+      </li>
+      <li>
+        <span class="flow-step">2</span>
+        <span><strong><code>model.load_weights(iterator)</code></strong><br>
+        新权重从 checkpoint 加载到<strong>临时 tensor</strong> 中。此时 layer 上的参数是 meta tensor，不占显存。</span>
+      </li>
+      <li>
+        <span class="flow-step">3</span>
+        <span><strong><code>finalize_layerwise_reload(model)</code></strong><br>
+        逐层调用 <code>_copy_and_restore_kernel_tensors()</code>：把处理好的新权重数据通过 <code>param.data.copy_()</code> 写回到第 1 步保存的<strong>原始 tensor</strong> 中，然后把原始 parameter 对象重新注册到 module 上。</span>
+      </li>
+    </ol>
+
+    <pre><code><span class="cm"># layerwise.py:392-408 — 核心 copy-back</span>
+<span class="kw">def</span> <span class="fn">_copy_and_restore_kernel_tensors</span>(layer, info):
+    parameters, buffers = info.kernel_tensors
+    <span class="kw">for</span> name, param <span class="kw">in</span> parameters.items():
+        param.data.<span class="fn">copy_</span>(getattr(layer, name))   <span class="cm"># 原地写入</span>
+    <span class="kw">for</span> name, buffer <span class="kw">in</span> buffers.items():
+        buffer.data.<span class="fn">copy_</span>(getattr(layer, name))  <span class="cm"># 原地写入</span>
+    <span class="fn">_place_kernel_tensors</span>(layer, info)           <span class="cm"># 重新注册原始 param</span></code></pre>
+
+    <p>
+      <code>reload_weights()</code> 在整个流程完成后<strong>不调用 <code>clear_all_graphs()</code></strong>——正是因为它依赖上述机制保证了地址不变。
+    </p>
+  </section>
+
+  <!-- ═══ §6 两条触发路径 ═══ -->
+  <section>
+    <h2>权重更新的两条入口</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>路径</th>
+            <th>触发方</th>
+            <th>入口</th>
+            <th>是否清 graph</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>离线 reload</strong></td>
+            <td>用户/调度器主动触发</td>
+            <td><code>GPUModelRunner.reload_weights()</code></td>
+            <td>否</td>
+          </tr>
+          <tr>
+            <td><strong>在线 weight transfer</strong></td>
+            <td>RL 训练侧推送</td>
+            <td><code>GPUWorker.start/update/finish_weight_update()</code></td>
+            <td>否</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      两条路径最终都走到同一个 layerwise reload 编排，通过 <code>copy_()</code> 保持地址稳定。<code>clear_all_graphs()</code> 只在 <code>shutdown()</code>（分布式 teardown 前）和 graph profiling 估算后调用。
+    </p>
+  </section>
+
+  <!-- ═══ §7 地址预分配 ═══ -->
+  <section>
+    <h2>地址预分配模式</h2>
+    <p>
+      部分模块在初始化阶段就预分配了稳定地址的 tensor，而不是等 <code>process_weights_after_loading()</code> 阶段再创建。典型案例是 HPC RoPE+Norm 融合层：
+    </p>
+
+    <pre><code><span class="cm"># hpc/rope_norm.py:152-154</span>
+<span class="cm"># Pre-allocate norm weight tensors as Parameters so they</span>
+<span class="cm"># have stable addresses for CUDA Graph replay.</span>
+<span class="cm"># process_weights_after_loading() updates them inplace</span>
+<span class="cm"># via copy_() so refit does not invalidate captured</span>
+<span class="cm"># graph tensor pointers.</span>
+self.qnorm_weight = torch.nn.Parameter(
+    torch.empty(head_dim, dtype=torch.float32),
+    requires_grad=<span class="kw">False</span>,
+)</code></pre>
+
+    <p>
+      这类预分配确保了即使权重经过 quantization、repacking 等变换，<code>copy_()</code> 的目标地址在模型生命周期内保持恒定。
+    </p>
+  </section>
+
+  <!-- ═══ §8 正确性风险 ═══ -->
+  <section>
+    <h2>正确性风险</h2>
+    <div class="callout callout-risk">
+      <div class="callout-label">核心不变量</div>
+      <p>
+        <strong>权重 tensor 的 <code>data_ptr()</code> 在 reload 前后必须不变。</strong>如果任何环节创建了新 tensor（新地址）而不是 <code>copy_()</code> 进旧 tensor，CUDA graph replay 会从旧地址读取 stale data——这是一个<strong>静默正确性 bug</strong>，不会有任何报错。
+      </p>
+    </div>
+
+    <p>已知的破坏场景：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>场景</th>
+            <th>原因</th>
+            <th>后果</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>量化方案改变 dtype/shape</td>
+            <td><code>copy_()</code> 要求 shape 和 dtype 兼容，无法原地写入</td>
+            <td>需要 fallback 到 <code>clear_all_graphs()</code> 重新捕获</td>
+          </tr>
+          <tr>
+            <td>PWAL 中 <code>replace_parameter</code></td>
+            <td>直接替换 module 上的 parameter 对象，新 tensor 地址不同</td>
+            <td>graph 读到旧权重或无效内存</td>
+          </tr>
+          <tr>
+            <td><code>process_weights_after_loading</code> 分配新 buffer</td>
+            <td>部分层的后处理创建新 tensor 而非原地更新</td>
+            <td>graph 读到旧权重或无效内存</td>
+          </tr>
+          <tr>
+            <td>Sleep/Wake 后地址漂移</td>
+            <td>CuMemAllocator 在 wake 时可能分配到不同地址</td>
+            <td>需要 graph 重新捕获（由 sleep/wake 流程处理）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══ §9 关键源文件 ═══ -->
+  <section>
+    <h2>关键源文件索引</h2>
+
+    <div class="file-grid">
+      <div class="file-ref">
+        <span class="file-path">compilation/cuda_graph.py</span>
+        <span class="file-desc">CUDAGraphWrapper — 按 BatchDescriptor 缓存 graph 的 capture/replay 核心</span>
+      </div>
+      <div class="file-ref">
+        <span class="file-path">compilation/breakable_cudagraph.py</span>
+        <span class="file-desc">BreakableCUDAGraphWrapper — 运行时在 attention op 处断开的替代实现</span>
+      </div>
+      <div class="file-ref">
+        <span class="file-path">model_loader/reload/layerwise.py</span>
+        <span class="file-desc">Layerwise reload 编排 — initialize / finalize / copy_and_restore</span>
+      </div>
+      <div class="file-ref">
+        <span class="file-path">layers/hpc/rope_norm.py</span>
+        <span class="file-desc">地址预分配的典型案例（qnorm_weight / knorm_weight）</span>
+      </div>
+      <div class="file-ref">
+        <span class="file-path">v1/worker/gpu_model_runner.py</span>
+        <span class="file-desc">reload_weights() 入口 — 调用 layerwise reload，不清 graph</span>
+      </div>
+      <div class="file-ref">
+        <span class="file-path">v1/worker/gpu_worker.py</span>
+        <span class="file-desc">Weight transfer engine 入口 — start/update/finish_weight_update</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ Footer ═══ -->
+  <footer class="page-footer">
+    vLLM Weight Update Correctness · CUDA Graph Refit 机制分析
+  </footer>
+
+</div>

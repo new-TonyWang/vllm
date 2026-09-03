@@ -148,7 +148,13 @@ class TrtLlmNvFp4ExpertsBase:
         # g1_scale_c = a13_scale * w13_scale_2 / a2_scale
         return self.quant_config.g1_alphas * self.quant_config.a2_gscale
 
+    def supports_selective_reload(self) -> bool:
+        return True
+
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        if not hasattr(self, "_base_w13_weight_scale_2"):
+            self._base_w13_weight_scale_2 = layer.w13_weight_scale_2.detach().clone()
+            self._base_w2_weight_scale_2 = layer.w2_weight_scale_2.detach().clone()
         layer.w13_weight_scale_2.data.mul_(layer.w13_input_scale)
         layer.w2_weight_scale_2.data.mul_(layer.w2_input_scale)
         # Recompute g1_scale_c since g1_alphas was just fused in-place.
@@ -178,10 +184,6 @@ class TrtLlmNvFp4ExpertsBase:
             )
             self.gemm1_clamp_limit = layer.gemm1_clamp_limit
 
-        # beta shifts the raw GEMM1 accumulator, so fold by g1_alphas like the
-        # clamp limit. alpha is applied to the dequantized gate, so it stays
-        # raw. Register both on the layer so EPLB rearranges them with the
-        # other per-expert tensors.
         if self.gemm1_beta is not None:
             gemm1_beta = (
                 self.gemm1_beta
@@ -189,8 +191,7 @@ class TrtLlmNvFp4ExpertsBase:
                 else self.gemm1_beta / self.quant_config.g1_alphas
             )
             layer.register_parameter(
-                "gemm1_beta",
-                torch.nn.Parameter(gemm1_beta, requires_grad=False),
+                "gemm1_beta", torch.nn.Parameter(gemm1_beta, requires_grad=False)
             )
             self.gemm1_beta = layer.gemm1_beta
 
@@ -200,6 +201,49 @@ class TrtLlmNvFp4ExpertsBase:
                 torch.nn.Parameter(self.gemm1_alpha, requires_grad=False),
             )
             self.gemm1_alpha = layer.gemm1_alpha
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Recompute fused NVFP4 scales without accumulating prior updates."""
+        if updated_parameter_names and not any(
+            name.endswith(
+                (
+                    "w13_input_scale",
+                    "w2_input_scale",
+                    "w13_weight_scale_2",
+                    "w2_weight_scale_2",
+                )
+            )
+            for name in updated_parameter_names
+        ):
+            return
+        if not hasattr(self, "_base_w13_weight_scale_2"):
+            raise RuntimeError("NVFP4 source scales were not captured at cold start")
+        with torch.no_grad():
+            # The runtime fields are also the checkpoint load destinations.
+            # Refresh the raw snapshot first when a source scale arrived in
+            # this transaction, then apply activation-scale fusion exactly once.
+            if updated_parameter_names and any(
+                name.endswith("w13_weight_scale_2")
+                for name in updated_parameter_names
+            ):
+                self._base_w13_weight_scale_2.copy_(layer.w13_weight_scale_2)
+            if updated_parameter_names and any(
+                name.endswith("w2_weight_scale_2")
+                for name in updated_parameter_names
+            ):
+                self._base_w2_weight_scale_2.copy_(layer.w2_weight_scale_2)
+            layer.w13_weight_scale_2.copy_(
+                self._base_w13_weight_scale_2 * layer.w13_input_scale
+            )
+            layer.w2_weight_scale_2.copy_(
+                self._base_w2_weight_scale_2 * layer.w2_input_scale
+            )
+            if hasattr(layer, "g1_scale_c"):
+                layer.g1_scale_c.copy_(self._compute_g1_scale_c())
 
     @staticmethod
     def _supports_current_device() -> bool:

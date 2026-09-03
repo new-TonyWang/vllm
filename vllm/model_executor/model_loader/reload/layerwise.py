@@ -109,6 +109,12 @@ def initialize_layerwise_reload(model: torch.nn.Module):
 
         # Save current tensors for later copying
         info.kernel_tensors = get_layer_params_buffers(layer)
+        # Restore transformed runtime tensors to checkpoint layout before the
+        # incoming loaders materialize this layer. The default hook is a no-op.
+        quant_method = getattr(layer, "quant_method", None)
+        restore = getattr(quant_method, "restore_weights_before_loading", None)
+        if callable(restore):
+            restore(layer)
         # snapshot now: restore_layer_on_meta drops alias buffers from the live set
         info.kernel_non_persistent_buffers = set(layer._non_persistent_buffers_set)
 
@@ -225,7 +231,11 @@ def make_online_process_loader(layer: torch.nn.Module, param_name: str) -> Calla
     return online_process_loader
 
 
-def finalize_layerwise_processing(model: torch.nn.Module, model_config: ModelConfig):
+def finalize_layerwise_processing(
+    model: torch.nn.Module,
+    model_config: ModelConfig,
+    updated_parameter_names: frozenset[str] | None = None,
+):
     """
     Apply processing to any layers which were not layerwise processed during loading.
     This includes attention layers and layers which have weight elements which are not
@@ -283,6 +293,12 @@ def finalize_layerwise_processing(model: torch.nn.Module, model_config: ModelCon
         _finalize_attention_layer(layer, info, model_config)
         info.reset()
 
+    # Opted-in modules defer derived-state work until every checkpoint tensor
+    # has arrived. Unrecognized modules remain on the layerwise fallback path.
+    from .selective import refresh_derived_state
+
+    refresh_derived_state(model, updated_parameter_names)
+
     LOADING_LAYERS.clear()
 
 
@@ -302,7 +318,8 @@ def _finalize_attention_layer(
         _reload_attention_scales(layer, info)
     else:
         _place_kernel_tensors(layer, info)
-    layer.process_weights_after_loading(model_config.dtype)
+    if not _supports_selective_reload(layer):
+        layer.process_weights_after_loading(model_config.dtype)
 
 
 def _reload_attention_scales(layer: torch.nn.Module, info: LayerReloadingInfo) -> None:
@@ -313,9 +330,12 @@ def _reload_attention_scales(layer: torch.nn.Module, info: LayerReloadingInfo) -
     processing, since we use .data.copy_() to preserve kernel tensor
     references."""
     quant_method = getattr(layer, "quant_method", None)
-    if quant_method is not None:
-        # Re-create scale Parameters with sentinel values so unloaded scales
-        # are correctly detected by process_weights_after_loading
+    has_scale_storage = hasattr(layer, "q_scale") or hasattr(layer, "_q_scale")
+    if quant_method is not None and (
+        not _supports_selective_reload(layer) or not has_scale_storage
+    ):
+        # Re-create scale Parameters for the layerwise fallback. Selective
+        # modules keep their cold-start source storage and refresh mirrors later.
         quant_method.create_weights(layer)
 
     for name, args in info.loaded_weights:
@@ -323,7 +343,7 @@ def _reload_attention_scales(layer: torch.nn.Module, info: LayerReloadingInfo) -
         args.arguments["param"] = param
         _get_weight_loader(param)(*args.args, **args.kwargs)
 
-    if quant_method is not None:
+    if quant_method is not None and not _supports_selective_reload(layer):
         quant_method.process_weights_after_loading(layer)
 
     _copy_and_restore_kernel_tensors(layer, info)
@@ -359,7 +379,9 @@ def _layerwise_process(layer: torch.nn.Module, info: LayerReloadingInfo):
 
     # Process weights (quantization, repacking, etc.)
     quant_method = getattr(layer, "quant_method", None)
-    if isinstance(quant_method, QuantizeMethodBase):
+    if isinstance(quant_method, QuantizeMethodBase) and not _supports_selective_reload(
+        layer
+    ):
         quant_method.process_weights_after_loading(layer)
         # Re-reconcile parameter TP state: process_weights_after_loading may
         # have re-created Parameters (stamped with the global rank), which would
@@ -374,6 +396,13 @@ def _layerwise_process(layer: torch.nn.Module, info: LayerReloadingInfo):
 
     info.reset()
     logger.debug("%s: Processed", layer.__class__.__name__)
+
+
+def _supports_selective_reload(layer: torch.nn.Module) -> bool:
+    """Return whether a layer explicitly opts into derived-state refresh."""
+    owner = getattr(layer, "quant_method", None) or layer
+    capability = getattr(owner, "supports_selective_reload", None)
+    return callable(capability) and bool(capability())
 
 
 def _get_original_loader(tensor: torch.Tensor) -> Callable:

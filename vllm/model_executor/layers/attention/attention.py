@@ -591,6 +591,16 @@ class Attention(nn.Module, AttentionLayerBase):
         if not should_load_quant_weights(quant_method):
             set_default_quant_scales(self, register_buffer=False)
 
+    def refresh_derived_state(
+        self, updated_parameter_names: frozenset[str] | None = None
+    ) -> None:
+        """Refresh attention backend state without replacing graph-visible storage."""
+        self.impl.refresh_derived_state(updated_parameter_names)
+        quant_method = getattr(self, "quant_method", None)
+        supports_reload = getattr(quant_method, "supports_selective_reload", None)
+        if quant_method is not None and callable(supports_reload) and supports_reload():
+            quant_method.refresh_derived_state(self, updated_parameter_names)
+
     def get_attn_backend(self) -> type[AttentionBackend]:
         return self.attn_backend
 

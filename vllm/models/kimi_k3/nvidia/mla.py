@@ -480,6 +480,63 @@ class MultiHeadLatentAttention(nn.Module, AttentionLayerBase):
             "_k_scale_inv", self._k_scale.reciprocal().reshape(1), persistent=False
         )
 
+    def supports_selective_reload(self) -> bool:
+        """Whether K3's absorbed MLA state can be refreshed in place.
+
+        ``kv_b_proj`` remains available after loading and the decode weights and
+        inverse cache scales are preallocated by ``process_weights_after_loading``.
+        Instances which have not completed that step stay on the layerwise
+        fallback rather than risking a partially initialized refresh.
+        """
+        return all(
+            hasattr(self, name)
+            for name in ("W_UK_T", "W_UV", "_q_scale_inv", "_k_scale_inv")
+        )
+
+    def refresh_derived_state(
+        self, updated_parameter_names: frozenset[str] | None = None
+    ) -> None:
+        """Refresh K3 absorbed weights and inverse cache scales in place."""
+        names = updated_parameter_names or frozenset()
+        refresh_weights = not names or any(
+            name.endswith("kv_b_proj.weight") for name in names
+        )
+        refresh_scales = not names or any(
+            name.endswith(suffix)
+            for name in names
+            for suffix in ("q_scale", "k_scale", "_q_scale", "_k_scale")
+        )
+
+        if refresh_weights:
+            source = get_and_maybe_dequant_weights(
+                self.kv_b_proj, out_dtype=torch.bfloat16
+            ).T
+            source = source.view(
+                self.kv_lora_rank,
+                self.num_local_heads,
+                self.qk_nope_head_dim + self.v_head_dim,
+            )
+            w_uk, w_uv = source.split(
+                [self.qk_nope_head_dim, self.v_head_dim], dim=-1
+            )
+            w_uv = w_uv.transpose(0, 1)
+            w_uk_t = w_uk.permute(1, 2, 0)
+            if self.W_UV.shape != w_uv.shape or self.W_UK_T.shape != w_uk_t.shape:
+                raise RuntimeError("K3 MLA absorbed weight shape changed during reload")
+            with torch.no_grad():
+                self.W_UV.copy_(w_uv)
+                self.W_UK_T.copy_(w_uk_t)
+
+        if refresh_scales:
+            quant_method = getattr(self, "quant_method", None)
+            if quant_method is not None and hasattr(self, "q_scale"):
+                # The reload path restores checkpoint scale parameters before
+                # this callback; materialize their device/host mirrors first.
+                quant_method.process_weights_after_loading(self)
+            with torch.no_grad():
+                self._q_scale_inv.copy_(self._q_scale.reciprocal().reshape(1))
+                self._k_scale_inv.copy_(self._k_scale.reciprocal().reshape(1))
+
     def _v_up_proj(self, x: torch.Tensor, out: torch.Tensor) -> None:
         """Project latent attention output back to ``v`` via ``W_UV`` (bmm)."""
         # (B, N, L) -> (N, B, L)

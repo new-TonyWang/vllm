@@ -286,6 +286,10 @@ def _insert_context_kv(
 
 
 class DSparkDeepseekV4ForCausalLM(nn.Module):
+    def supports_selective_reload(self) -> bool:
+        """DSpark has no in-place refresh for its derived state."""
+        return False
+
     # Draft weights ship in the target checkpoint (mtp.*) without embed/head, so
     # load_dspark_model always aliases the target's.
     has_own_embed_tokens = False

@@ -1219,3 +1219,7 @@ class CompressedTensorsKVCacheMethod(BaseKVCacheMethod):
         del layer.k_zero_point
         del layer.v_zero_point
         del layer.q_zero_point
+
+    def supports_selective_reload(self) -> bool:
+        """Per-head compressed scales still use replacement semantics."""
+        return False

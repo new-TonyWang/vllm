@@ -224,6 +224,10 @@ def _insert_context_kv(
 class DSparkDeepseekV4ForCausalLM(nn.Module):
     """XPU DSpark draft model entry point for DeepSeek-V4."""
 
+    def supports_selective_reload(self) -> bool:
+        """DSpark has no in-place refresh for its derived state."""
+        return False
+
     has_own_embed_tokens = False
     has_own_lm_head = False
 

@@ -1620,9 +1620,28 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                 .sum(dim=1)
             )
             if layer.hc_attn_fn_broadcast is None:
-                layer.hc_attn_fn_broadcast = broadcast
-            else:
-                layer.hc_attn_fn_broadcast.copy_(broadcast)
+                # Allocate the graph-visible destination once during cold
+                # start; subsequent reloads only copy into this storage.
+                layer.hc_attn_fn_broadcast = torch.empty_like(broadcast)
+            layer.hc_attn_fn_broadcast.copy_(broadcast)
+
+    def refresh_mhc_broadcast_weights(self) -> None:
+        """Refresh mHC broadcast weights without allocating graph-visible state."""
+        if not get_pp_group().is_first_rank or self.start_layer >= self.end_layer:
+            return
+        layer = self.layers[self.start_layer]
+        if not isinstance(layer, DeepseekV4DecoderLayer):
+            return
+        if layer.hc_attn_fn_broadcast is None:
+            raise RuntimeError("mHC broadcast storage was not preallocated")
+        broadcast = (
+            layer.hc_attn_fn.detach()
+            .view(-1, layer.hc_mult, layer.hidden_size)
+            .sum(dim=1)
+        )
+        if broadcast.shape != layer.hc_attn_fn_broadcast.shape:
+            raise RuntimeError("mHC broadcast shape changed during reload")
+        layer.hc_attn_fn_broadcast.copy_(broadcast)
 
 
 def _make_deepseek_v4_weights_mapper(expert_dtype: str) -> WeightsMapper:
@@ -1819,6 +1838,22 @@ class DeepseekV4ForCausalLM(
     def process_weights_after_loading(self) -> None:
         self.model.finalize_mega_moe_weights()
         self.model.finalize_mhc_broadcast_weights()
+
+    def supports_selective_reload(self) -> bool:
+        """Whether all model-derived state has an in-place refresh path."""
+        # Mega-MoE finalization builds backend runtime state that is not yet
+        # refreshable. Keep the whole model on the explicit layerwise fallback
+        # when any local layer uses that path.
+        return not any(
+            getattr(layer.ffn, "use_mega_moe", False)
+            for layer in self.model.layers
+            if hasattr(layer, "ffn")
+        )
+
+    def refresh_derived_state(self, updated_parameter_names=None) -> None:
+        """Refresh mHC derived state; Mega-MoE remains on the fallback path."""
+        del updated_parameter_names
+        self.model.refresh_mhc_broadcast_weights()
 
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.model.get_expert_mapping()
