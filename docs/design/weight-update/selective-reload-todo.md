@@ -86,6 +86,18 @@ runtime、KV cache 和临时 buffer，无法在 143,771 MiB H200 上安全启动
 的 FP8 block-scale loader。它不替代完整 959G checkpoint 验证；后者仍需额外节点或
 支持独立 publisher 的资源布局。
 
+## 验证批次 V5：Llama BF16 dense checkpoint
+
+- [x] 从 ModelScope 下载完整 `Llama-3.2-1B-Instruct` BF16 checkpoint，并核对
+  config、safetensors header 和实际 tensor 字节数。
+- [x] 使用 TP=1 在 GPU 0 启动 `LlamaForCausalLM` server，publisher 独占
+  GPU 1。
+- [x] 完成 day0 NCCL reload，将结果加入统一 verifier，并核对事务、bucket 汇总
+  与 H200 `rc=0`。
+
+本批补齐最终验收矩阵中的 Llama BF16 架构，保持 checkpoint 完整，不做减层或
+量化格式替换；finish 后额外 health check 必须返回 200。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
