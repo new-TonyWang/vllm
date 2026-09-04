@@ -112,6 +112,18 @@ runtime、KV cache 和临时 buffer，无法在 143,771 MiB H200 上安全启动
 8 个 expert；它验证架构和 loader 生命周期，不替代完整 93,405,585,408-byte
 checkpoint 的容量测试。
 
+## 验证批次 V7：GPTQ Marlin INT4 checkpoint
+
+- [x] 从 ModelScope 下载完整 `Qwen2.5-7B-Instruct-GPTQ-Int4` checkpoint，按
+  repository SHA-256 核对 2 个 safetensors shard。
+- [x] 确认 vLLM 选择 `AutoGPTQLinearMethod`/Marlin kernel；使用 TP=1 在
+  GPU 0 启动 server，publisher 独占 GPU 1。
+- [x] 完成 day0 NCCL reload，将结果加入统一 verifier，并核对事务、bucket 汇总、
+  post-finish health 与 H200 `rc=0`。
+
+该 checkpoint 是 4-bit、group size 128、symmetric、`desc_act=false`，满足当前
+AutoGPTQ Marlin 支持条件，用于补齐最终验收矩阵的 Marlin/INT4 路径。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
