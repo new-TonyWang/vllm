@@ -98,6 +98,20 @@ runtime、KV cache 和临时 buffer，无法在 143,771 MiB H200 上安全启动
 本批补齐最终验收矩阵中的 Llama BF16 架构，保持 checkpoint 完整，不做减层或
 量化格式替换；finish 后额外 health check 必须返回 200。
 
+## 验证批次 V6：Mixtral BF16 reduced checkpoint
+
+- [x] 从 ModelScope `Mixtral-8x7B-Instruct-v0.1` 构造两层 BF16 checkpoint；
+  下载全局参数与 layer 0–1 所需的 3 个 shard，并按 safetensors header 重建
+  index metadata。
+- [x] 使用 TP=1 在 GPU 0 启动 `MixtralForCausalLM` server，publisher 独占
+  GPU 1。
+- [x] 完成 day0 NCCL reload，将结果加入统一 verifier，并核对事务、bucket 汇总、
+  post-finish health 与 H200 `rc=0`。
+
+本批覆盖最终验收矩阵的 Mixtral BF16 MoE loader。两层 checkpoint 保留每层全部
+8 个 expert；它验证架构和 loader 生命周期，不替代完整 93,405,585,408-byte
+checkpoint 的容量测试。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
