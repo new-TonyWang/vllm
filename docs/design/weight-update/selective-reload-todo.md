@@ -246,11 +246,16 @@ Qwen2.5 重验和 Llama A/B 重验覆盖。
   encoder cache；缓存清理完成前不得发布新的 `weight_version`。
 - [ ] 明确 cache generation 与 weight generation 的提交顺序，禁止新权重复用旧
   权重生成的 KV block；cache invalidation 失败时 transaction 必须 fail-closed。
-- [ ] 为 START 后已经写入 live storage 的异常定义语义：要么恢复完整旧 generation，
+- [x] 为 START 后已经写入 live storage 的异常定义语义：要么恢复完整旧 generation，
   要么停止 serving，禁止在混合 generation 上继续推理。
 - [ ] 拒绝缺失 tensor、重复 tensor name、未声明的 sparse update、bucket 中断和任一
   receiver rank 失败；所有 rank 必须对 generation、tensor accounting 和最终状态达成
-  一致。
+  一致：
+    - [x] dense NCCL/IPC 拒绝单 bucket 内及跨 bucket 的重复 tensor name。
+    - [x] transaction active 或 start/update/finish 任一阶段失败后禁止 serving；只有
+      finish 成功或完整 disk reload 恢复后才重新开放。
+    - [ ] START manifest 声明 generation id、完整 tensor 集合和 sparse policy，并在
+      finish 拒绝缺失 tensor、未知 tensor、generation 不一致和 receiver rank 分歧。
 - [ ] 为同步 `LLM`、`AsyncLLM` 和 draft-model update 覆盖相同的提交与缓存失效
   契约，并补充失败注入单元测试。
 
@@ -267,6 +272,17 @@ prefix（含 connector）→ multimodal → encoder → version 顺序提交；�
 warm 阶段累计 prefix hits 从未修复的 96 降为 64，证明 reload 后第一次 B 请求未
 复用 A cache、第二次 B 请求仍能正常命中新 cache。H200 job `ad8abb41a011` 返回
 `[h200_ncu] status=ok rc=0`。
+
+失败语义证据（2026-09-04）：commit `142e770e57` 为 start/update/finish 异常增加
+不可自动清除的 worker failure latch，并让完整 `reload_weights` 成为显式恢复路径；
+commit `50d1fc8667` 进一步在 transaction active 期间拒绝 execute/sample，覆盖
+publisher 丢 bucket 后没有 receiver exception 的情况。dense NCCL/IPC 的 bucket 内
+和跨 bucket 重名均在接收数据前拒绝。固定环境共 18 个 worker/metadata 测试通过，
+H200 返回 `status=ok rc=0`；真实服务只调用 START 后的 completion 返回 HTTP 500，
+`v12-interruption-result.json` 记录 `serving_blocked=true`。完整正常 reload 回归仍通过
+146 tensors / 2,471,628,800 bytes / 5 buckets 和统一 verifier，H200 job
+`eee342b8d025` 返回 `rc=0`。缺失 tensor 和多 rank 一致性仍需 START manifest，未在
+本阶段宣称完成。
 
 ## 验证批次 V13：storage ownership 与 backend 收口
 

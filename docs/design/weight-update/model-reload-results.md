@@ -16,7 +16,8 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
   DeepSeek V4 partial-bucket fix `cc1f202883`; packed wire negotiation
   `38cf4a5`; packed stream ordering `c95957f3b8`; old-NCCL compatibility and
   disabled-communicator fail-closed `59bdf7cf92`; post-update cache invalidation
-  `730eab3782`
+  `730eab3782`; failed/active transaction serving guard `142e770e57` and
+  `50d1fc8667`
 - day0-kit dtype fix: `c446b55`; configurable prefix-cache oracle `152c2c0`
 - NCCL settings: `backend=nccl`, `NCCL_SOCKET_IFNAME=lo`
 
@@ -109,6 +110,19 @@ and encoder state before publishing the new weight version. The same run then
 produced warm-B == cold-B, with 64 cumulative hit tokens: the first warm-B
 request rebuilt B's cache and the repeat hit it. Four synchronous/asynchronous
 ordering and invalidation-failure tests pass in the fixed environment.
+
+V12 transaction failure validation separates an incomplete active transaction
+from an explicit receiver exception. In both cases workers now reject model
+execution: an exception latches the worker until a full disk reload or restart,
+while an unfinished START remains unavailable until finish. A real H200 server
+given START with no following bucket returned HTTP 500 for completion and wrote
+`v12-interruption-result.json` with `serving_blocked=true`. Dense NCCL and IPC
+also reject duplicate names within one bucket or repeated across buckets before
+receiving their payload. Eighteen focused tests pass on H200. The normal path
+was rechecked by job `eee342b8d025`: 146 tensors, 2,471,628,800 bytes, five
+buckets, exact A/B comparison and the unified verifier all pass with `rc=0`.
+Missing-name and cross-rank completeness still require a START manifest and are
+not counted as complete.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.
