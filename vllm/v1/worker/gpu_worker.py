@@ -45,6 +45,7 @@ from vllm.distributed.parallel_state import (
     checkpoint_restore_distributed_state,
     get_pp_group,
     get_tp_group,
+    get_world_group,
     resume_device_comms,
     suspend_device_comms,
 )
@@ -1397,7 +1398,12 @@ class Worker(WorkerBase):
         try:
             if is_draft:
                 self._set_draft_weight_update_target()
-            self.weight_transfer_engine.start_weight_update()
+            start_error: BaseException | None = None
+            try:
+                self.weight_transfer_engine.start_weight_update()
+            except BaseException as err:
+                start_error = err
+            self._raise_if_any_weight_update_rank_failed("start", start_error)
         except BaseException:
             self._weight_update_failed = True
             self.weight_transfer_engine.reset_weight_update_target()
@@ -1448,8 +1454,22 @@ class Worker(WorkerBase):
                     ]
                 else:
                     local_update_info = update_info
-                self._validate_weight_update_names(local_update_info)
-                self.weight_transfer_engine.update_weights(local_update_info)
+                validation_error: BaseException | None = None
+                try:
+                    self._validate_weight_update_names(local_update_info)
+                except BaseException as err:
+                    validation_error = err
+                self._raise_if_any_weight_update_rank_failed(
+                    "metadata preflight", validation_error
+                )
+                update_error: BaseException | None = None
+                try:
+                    self.weight_transfer_engine.update_weights(local_update_info)
+                except BaseException as err:
+                    update_error = err
+                self._raise_if_any_weight_update_rank_failed(
+                    "payload receive", update_error
+                )
                 self._weight_update_received_names.update(
                     local_update_info.get("names", ())
                 )
@@ -1471,8 +1491,20 @@ class Worker(WorkerBase):
 
         try:
             with set_current_vllm_config(self.vllm_config):
-                self._validate_weight_update_finish(generation_id)
-                self.weight_transfer_engine.finish_weight_update()
+                validation_error: BaseException | None = None
+                try:
+                    self._validate_weight_update_finish(generation_id)
+                except BaseException as err:
+                    validation_error = err
+                self._raise_if_any_weight_update_rank_failed(
+                    "finish preflight", validation_error
+                )
+                finish_error: BaseException | None = None
+                try:
+                    self.weight_transfer_engine.finish_weight_update()
+                except BaseException as err:
+                    finish_error = err
+                self._raise_if_any_weight_update_rank_failed("finish", finish_error)
         except BaseException:
             self._weight_update_failed = True
             raise
@@ -1525,6 +1557,37 @@ class Worker(WorkerBase):
         self._weight_update_expected_names = None
         self._weight_update_received_names.clear()
         self._weight_update_allow_partial = False
+
+    def _raise_if_any_weight_update_rank_failed(
+        self, stage: str, local_error: BaseException | None
+    ) -> None:
+        if self.vllm_config.parallel_config.world_size == 1:
+            if local_error is not None:
+                raise local_error
+            return
+
+        world = get_world_group()
+        local_failure = (
+            None
+            if local_error is None
+            else f"{type(local_error).__name__}: {local_error}"
+        )
+        failures: list[str | None] = [None] * world.world_size
+        torch.distributed.all_gather_object(
+            failures, local_failure, group=world.cpu_group
+        )
+        failed_ranks = [
+            f"rank {rank}: {failure}"
+            for rank, failure in zip(world.ranks, failures)
+            if failure is not None
+        ]
+        if failed_ranks:
+            message = f"Weight update {stage} failed receiver consensus: " + "; ".join(
+                failed_ranks
+            )
+            if local_error is not None:
+                raise RuntimeError(message) from local_error
+            raise RuntimeError(message)
 
     def shutdown(self) -> None:
         gc.unfreeze()

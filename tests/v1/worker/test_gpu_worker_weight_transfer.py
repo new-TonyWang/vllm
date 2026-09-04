@@ -13,6 +13,7 @@ import torch.nn as nn
 
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.lora.layers import BaseLayerWithLoRA
+from vllm.v1.worker import gpu_worker as gpu_worker_module
 from vllm.v1.worker.gpu_model_runner import _get_parameter_for_reload
 from vllm.v1.worker.gpu_worker import Worker
 
@@ -325,6 +326,74 @@ def test_manifest_allows_declared_partial_update():
     Worker.finish_weight_update(worker, generation_id="generation-1")
 
     Worker.check_health(worker)
+
+
+def test_remote_rank_metadata_failure_stops_all_ranks_before_receive(monkeypatch):
+    engine = _RecordingEngine()
+    worker = _make_worker(engine)
+    Worker.start_weight_update(worker)
+    worker.vllm_config.parallel_config.world_size = 2
+    cpu_group = object()
+    world = type(
+        "FakeWorld",
+        (),
+        {"world_size": 2, "ranks": [0, 1], "cpu_group": cpu_group},
+    )()
+    monkeypatch.setattr(gpu_worker_module, "get_world_group", lambda: world)
+
+    def gather_failures(failures, local_failure, *, group):
+        assert group is cpu_group
+        assert local_failure is None
+        failures[:] = [None, "ValueError: unknown parameter"]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_failures)
+
+    with pytest.raises(RuntimeError, match="rank 1: ValueError"):
+        Worker.update_weights(worker, {"names": ["expected"]})
+
+    assert engine.update_calls == []
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
+
+
+def test_remote_rank_finish_failure_latches_successful_rank(monkeypatch):
+    engine = _RecordingEngine()
+    worker = _make_worker(engine)
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": [],
+        },
+    )
+    worker.vllm_config.parallel_config.world_size = 2
+    cpu_group = object()
+    world = type(
+        "FakeWorld",
+        (),
+        {"world_size": 2, "ranks": [0, 1], "cpu_group": cpu_group},
+    )()
+    monkeypatch.setattr(gpu_worker_module, "get_world_group", lambda: world)
+    gather_count = 0
+
+    def gather_failures(failures, local_failure, *, group):
+        nonlocal gather_count
+        assert group is cpu_group
+        assert local_failure is None
+        gather_count += 1
+        failures[:] = (
+            [None, None] if gather_count == 1 else [None, "ValueError: finish boom"]
+        )
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_failures)
+
+    with pytest.raises(RuntimeError, match="rank 1: ValueError"):
+        Worker.finish_weight_update(worker, generation_id="generation-1")
+
+    assert engine.finished is True
+    assert worker.model_runner.reset_lora_calls == 0
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
 
 
 def test_missing_engine_raises():
