@@ -73,6 +73,19 @@ TP=7 也没有安全显存余量。它们不与本批混跑。
 Kimi-K2 继续留在后续资源批次：959G 权重用 TP=7 后每卡原始权重约 137G，尚未计入
 runtime、KV cache 和临时 buffer，无法在 143,771 MiB H200 上安全启动。
 
+## 验证批次 V4：Kimi-K2 FP8 reduced checkpoint
+
+- [x] 从完整 `Kimi-K2-Instruct-0905` 构造两层 checkpoint；只保留全局参数和
+  layer 0–1 的 index 项，并用硬链接复用对应的 3 个 shard。
+- [x] 使用 TP=1 在 GPU 0 启动 `DeepseekV3ForCausalLM` server，publisher 独占
+  GPU 1。
+- [x] 完成 day0 NCCL reload，将结果加入统一 verifier，并核对事务、bucket 汇总
+  与 H200 `rc=0`。
+
+两层 checkpoint 含 2,351 个 tensor、22,261,573,056 bytes，用于覆盖 Kimi-K2
+的 FP8 block-scale loader。它不替代完整 959G checkpoint 验证；后者仍需额外节点或
+支持独立 publisher 的资源布局。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的

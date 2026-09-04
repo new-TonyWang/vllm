@@ -29,6 +29,7 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `Qwen3-30B-A3B-FP8` | day0-kit NCCL | PASS | `day0-qwen30-rerun6.json`; `send_weights_completed=true`, epoch/update version 1, 37,491 tensors, 32,444,792,832 bytes, 52 buckets; H200 `rc=0` |
 | `Qwen3-30B-A3B` | day0-kit NCCL | PASS | `day0-qwen30-bf16-full-day0.json`; `send_weights_completed=true`, epoch/update version 1, 18,867 tensors, 61,064,245,248 bytes, 54 buckets; H200 `rc=0` |
 | `Step-3.7-Flash` | day0-kit NCCL, TP=4 | PASS | `day0-step37-full-day0-rerun.json`; inference/rendezvous world size 4/5, `send_weights_completed=true`, epoch/update version 1, 1,471 tensors, 402,730,656,512 bytes, 273 buckets; H200 detached job `rc=0` |
+| `Kimi-K2-Instruct-0905-2layer` | day0-kit NCCL | PASS | `day0-kimi-k2-2layer-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 2,351 tensors, 22,261,573,056 bytes, 5 buckets; H200 detached job `rc=0` |
 | `DeepSeek-V3-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded the checkpoint and second generation completed |
 | `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v3-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 1,581 tensors, 15,802,320,320 bytes, 5 buckets; H200 `rc=0` |
 | `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v4-rerun5.json`; `send_weights_completed=true`, epoch/update version 1, 4,711 tensors, 12,844,479,536 bytes, 7 buckets; H200 `rc=0` |
@@ -67,9 +68,15 @@ reports `send_weights_completed=true`, and the completed H200 workload returns
 PASS row's JSON and matching server log. It checks the NCCL backend and trainer
 transport, start/update/finish ordering, bucket indices and aggregate
 tensor/byte counts, epoch/update version, and `send_weights_completed=true`.
-The nine-checkpoint audit completed on H200 with `status=ok rc=0`. It also
+The ten-checkpoint audit completed on H200 with `status=ok rc=0`. It also
 checks inference and rendezvous world sizes: 4/5 for the TP=4 Step server and
 1/2 for each single-rank server.
+
+The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
+checkpoint index. Its three shard files are hard links to the original files.
+The copied custom tokenizer imports `bytes_to_unicode` from its current
+Transformers module; no package downgrade or alternate runtime was used. The
+day0 runner now exits early if the vLLM server dies during its health loop.
 
 ## Background-job behavior
 
