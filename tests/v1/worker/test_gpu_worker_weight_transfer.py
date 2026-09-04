@@ -111,6 +111,8 @@ def test_start_update_finish_delegates_to_engine():
     Worker.start_weight_update(worker)
     assert engine.started is True
     assert worker._weight_update_active is True
+    with pytest.raises(RuntimeError, match="transaction is active"):
+        Worker.check_health(worker)
 
     Worker.update_weights(worker, {"names": ["w"]})
     assert engine.update_calls == [{"names": ["w"]}]
@@ -122,6 +124,7 @@ def test_start_update_finish_delegates_to_engine():
     assert worker._weight_update_active is False
     assert engine.seen_configs == [worker.vllm_config] * 3
     assert worker.model_runner.reset_lora_calls == 1
+    Worker.check_health(worker)
 
 
 @pytest.mark.parametrize(

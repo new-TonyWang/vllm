@@ -1108,7 +1108,7 @@ class Worker(WorkerBase):
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
-        self._raise_if_weight_update_failed()
+        self._raise_if_weight_update_unavailable()
         return self.model_runner.sample_tokens(grammar_output)
 
     @torch.inference_mode()
@@ -1116,7 +1116,7 @@ class Worker(WorkerBase):
     def execute_model(
         self, scheduler_output: "SchedulerOutput"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
-        self._raise_if_weight_update_failed()
+        self._raise_if_weight_update_unavailable()
         intermediate_tensors = None
         forward_pass = scheduler_output.total_num_scheduled_tokens > 0
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
@@ -1286,6 +1286,13 @@ class Worker(WorkerBase):
         return self.model_runner.pin_lora(lora_id)
 
     def check_health(self) -> None:
+        self._raise_if_weight_update_unavailable()
+
+    def _raise_if_weight_update_unavailable(self) -> None:
+        if self._weight_update_active:
+            raise RuntimeError(
+                "Serving is disabled while a weight update transaction is active."
+            )
         self._raise_if_weight_update_failed()
 
     def _raise_if_weight_update_failed(self) -> None:

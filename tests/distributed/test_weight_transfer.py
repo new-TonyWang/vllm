@@ -1187,6 +1187,22 @@ def test_ipc_weight_transfer_between_processes(mode: str):
     )
 
 
+def test_ipc_receive_weights_rejects_name_from_prior_bucket():
+    engine = object.__new__(IPCWeightTransferEngine)
+    engine.device = torch.device("cuda:0")
+    engine.packed = False
+    engine._updated_parameter_names = {"test.weight"}
+    update_info = IPCWeightTransferUpdateInfo(
+        names=["test.weight"],
+        dtype_names=["bfloat16"],
+        shapes=[[4, 4]],
+        ipc_handles=[{}],
+    )
+
+    with pytest.raises(ValueError, match="already received"):
+        engine.receive_weights(update_info)
+
+
 def test_ipc_receive_weights_missing_gpu_uuid_raises():
     """Test that receive_weights raises if GPU UUID not found in IPC handles."""
     if torch.accelerator.device_count() < 1:
