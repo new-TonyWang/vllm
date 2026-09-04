@@ -99,6 +99,7 @@ def initialize_layerwise_reload(model: torch.nn.Module):
     # disable torchao reloading to avoid infinite recursion
     model._original_do_torchao_reload = getattr(model, "_do_torchao_reload", False)
     model._do_torchao_reload = False
+    model._layerwise_reload_active = True
 
     for layer in model.modules():
         info = get_layerwise_info(layer)
@@ -300,6 +301,7 @@ def finalize_layerwise_processing(
     refresh_derived_state(model, updated_parameter_names)
 
     LOADING_LAYERS.clear()
+    model._layerwise_reload_active = False
 
 
 def finalize_layerwise_reload(*args, **kwargs):

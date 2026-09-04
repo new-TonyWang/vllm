@@ -388,6 +388,36 @@ def test_deepseek_v4_selective_reload_capability_tracks_mega_moe(use_mega_moe):
     assert model.supports_selective_reload() is (not use_mega_moe)
 
 
+def test_deepseek_v4_defers_model_post_load_during_layerwise_reload(monkeypatch):
+    """Partial weight buckets must not finalize model-wide derived state."""
+    model = object.__new__(deepseek_v4_nvidia.DeepseekV4ForCausalLM)
+    torch.nn.Module.__init__(model)
+    model.hf_to_vllm_mapper = None
+    model._layerwise_reload_active = True
+    processed = []
+    model.process_weights_after_loading = lambda: processed.append(True)
+
+    class FakeLoader:
+        def __init__(self, loaded_model):
+            assert loaded_model is model
+
+        def load_weights(self, weights, mapper):
+            assert list(weights) == [("weight", torch.tensor(1))]
+            assert mapper is None
+            return {"weight"}
+
+    monkeypatch.setattr(deepseek_v4_nvidia, "AutoWeightsLoader", FakeLoader)
+
+    loaded = model.load_weights([("weight", torch.tensor(1))])
+
+    assert loaded == {"weight"}
+    assert not processed
+
+    model._layerwise_reload_active = False
+    model.load_weights([("weight", torch.tensor(1))])
+    assert processed == [True]
+
+
 def test_trtllm_nvfp4_refresh_recomputes_scales_in_place():
     class _Config:
         g1_alphas = torch.tensor([3.0, 4.0])
