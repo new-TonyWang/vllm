@@ -20,11 +20,15 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 ## Results
 
 | Model/checkpoint | Protocol | Result | Evidence |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `Qwen2.5-7B-Instruct-2layer` | day0-kit NCCL | PASS | `/inspire/hdd/global_user/wangtongyu-25057/day0-result.json`; `send_weights_completed=true`, `weight_epoch=1`, 27 tensors, 3,112,227,840 bytes; H200 `rc=0` |
+| `Qwen2.5-7B-Instruct` | day0-kit NCCL | PASS | `day0-qwen25-full-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 339 tensors, 15,231,233,024 bytes, 30 buckets; H200 `rc=0` |
+| `Qwen3-8B-2layer` | day0-kit NCCL | PASS | `day0-qwen3-8b-day0.json`; `send_weights_completed=true`, epoch/update version 1, 25 tensors, 3,261,113,344 bytes, 4 buckets; H200 `rc=0` |
 | `Qwen3.8-27B-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded 3 shards in 2.75s and second generation completed |
 | `Qwen3-30B-A3B-FP8` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; persistent result `qwen30-reload.json` has identical pre/post output `" _"` |
 | `Qwen3-30B-A3B-FP8` | day0-kit NCCL | PASS | `day0-qwen30-rerun6.json`; `send_weights_completed=true`, epoch/update version 1, 37,491 tensors, 32,444,792,832 bytes, 52 buckets; H200 `rc=0` |
+| `Qwen3-30B-A3B` | day0-kit NCCL | PASS | `day0-qwen30-bf16-full-day0.json`; `send_weights_completed=true`, epoch/update version 1, 18,867 tensors, 61,064,245,248 bytes, 54 buckets; H200 `rc=0` |
+| `Step-3.7-Flash` | day0-kit NCCL, TP=4 | PASS | `day0-step37-full-day0-rerun.json`; inference/rendezvous world size 4/5, `send_weights_completed=true`, epoch/update version 1, 1,471 tensors, 402,730,656,512 bytes, 273 buckets; H200 detached job `rc=0` |
 | `DeepSeek-V3-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded the checkpoint and second generation completed |
 | `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v3-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 1,581 tensors, 15,802,320,320 bytes, 5 buckets; H200 `rc=0` |
 | `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v4-rerun5.json`; `send_weights_completed=true`, epoch/update version 1, 4,711 tensors, 12,844,479,536 bytes, 7 buckets; H200 `rc=0` |
@@ -53,6 +57,19 @@ reports `send_weights_completed=true`, and the completed H200 workload returns
 - Qwen3.8, Qwen3-30B-A3B, and DeepSeek V3 now complete the day0 NCCL protocol;
   the earlier ABI, FlashAttention, and mixed host/container build blockers are
   resolved.
+- The complete Qwen2.5 directory had a reduced-checkpoint index copied into it.
+  The original ModelScope index was restored before validation; the prior index
+  remains as `model.safetensors.index.json.reduced-backup-20260903`.
+
+## Unified evidence audit
+
+`/inspire/hdd/global_user/wangtongyu-25057/verify_day0_reload.py` validates every
+PASS row's JSON and matching server log. It checks the NCCL backend and trainer
+transport, start/update/finish ordering, bucket indices and aggregate
+tensor/byte counts, epoch/update version, and `send_weights_completed=true`.
+The nine-checkpoint audit completed on H200 with `status=ok rc=0`. It also
+checks inference and rendezvous world sizes: 4/5 for the TP=4 Step server and
+1/2 for each single-rank server.
 
 ## Background-job behavior
 

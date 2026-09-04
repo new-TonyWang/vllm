@@ -40,6 +40,39 @@ reload 全量完成。
 本批只验证传输、loader 生命周期和当前已 opt-in 的派生状态；不替代下列 backend
 审计与最终 CUDA graph replay 验收。
 
+## 验证批次 V1：低成本 dense checkpoint 扩展
+
+- [x] `Qwen3-8B-2layer` 完成 day0 NCCL reload，并保存事务日志与结果 JSON。
+- [x] 完整 `Qwen2.5-7B-Instruct` 完成 day0 NCCL reload，并保存事务日志与结果
+  JSON。
+- [x] 使用统一 verifier 核对 backend、start/update/finish、bucket 汇总、epoch、
+  update version、`send_weights_completed` 和 H200 `rc=0`。
+
+本批不包含 Qwen3-30B BF16、Step-3.7-Flash、Kimi-K2、GR00T 或 MOSS；这些模型
+需要先分别确定显存并行方案或专用 multimodal runner，再作为后续独立批次落地。
+
+## 验证批次 V2：完整 BF16 MoE checkpoint
+
+- [x] 完整 `Qwen3-30B-A3B` 使用独立 server/publisher GPU 完成 day0 NCCL
+  reload。
+- [x] 将 server GPU memory utilization 提高到足以容纳 57G checkpoint，同时
+  保持 publisher 固定在 GPU 1，禁止 NCCL duplicate GPU。
+- [x] 将结果加入统一 verifier，核对完整事务、bucket 汇总和 H200 `rc=0`。
+
+Step-3.7-Flash（376G）和 Kimi-K2（959G）需要不同的多卡 server 方案；当前 8 卡
+节点还必须为 publisher 保留一张独立 GPU。Step 可用 TP=4 继续验证，Kimi 即使
+TP=7 也没有安全显存余量。它们不与本批混跑。
+
+## 验证批次 V3：Step-3.7 多卡 server
+
+- [x] runner 支持配置 TP size、publisher device 和 server health 等待时间。
+- [x] `Step-3.7-Flash` 使用 TP=4（GPU 0–3）启动，publisher 独占 GPU 4。
+- [x] 完成 day0 NCCL reload，并核对 4 个 inference ranks 的传输事务、结果 JSON
+  与 H200 `rc=0`。
+
+Kimi-K2 继续留在后续资源批次：959G 权重用 TP=7 后每卡原始权重约 137G，尚未计入
+runtime、KV cache 和临时 buffer，无法在 143,771 MiB H200 上安全启动。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
