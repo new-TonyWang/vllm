@@ -353,6 +353,28 @@ def test_nccl_receive_weights_rejects_packed_wire_mode_mismatch():
         engine.receive_weights(update_info)
 
 
+def test_nccl_weight_transfer_rejects_disabled_communicator(monkeypatch):
+    import vllm.distributed.device_communicators.pynccl as pynccl_mod
+    import vllm.distributed.utils as distributed_utils
+    from vllm.distributed.weight_transfer.nccl_common import (
+        stateless_init_process_group,
+    )
+
+    monkeypatch.setattr(
+        distributed_utils.StatelessProcessGroup,
+        "create",
+        lambda **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        pynccl_mod,
+        "PyNcclCommunicator",
+        lambda group, device: MagicMock(disabled=True),
+    )
+
+    with pytest.raises(RuntimeError, match="available PyNcclCommunicator"):
+        stateless_init_process_group("127.0.0.1", 29500, 0, 2, "cuda:0")
+
+
 def test_sparse_nccl_receive_weights_without_init_raises():
     """Test that sparse receive raises if init_transfer_engine wasn't called."""
     if torch.accelerator.device_count() < 1:

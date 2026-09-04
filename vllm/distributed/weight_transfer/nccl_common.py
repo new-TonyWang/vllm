@@ -155,7 +155,12 @@ def stateless_init_process_group(
     pg = StatelessProcessGroup.create(
         host=master_address, port=master_port, rank=rank, world_size=world_size
     )
-    return PyNcclCommunicator(pg, device=device)
+    communicator = PyNcclCommunicator(pg, device=device)
+    if communicator.disabled:
+        raise RuntimeError(
+            "NCCL weight transfer requires an available PyNcclCommunicator"
+        )
+    return communicator
 
 
 def uid_init_process_group(

@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 import os
+from unittest.mock import Mock
 
 import multiprocess as mp
 import numpy as np
@@ -12,6 +13,7 @@ import torch.distributed
 import vllm.envs as envs
 from tests.utils import ensure_current_vllm_config
 from vllm.distributed.communication_op import tensor_model_parallel_all_reduce  # noqa
+from vllm.distributed.device_communicators import pynccl_wrapper
 from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
 from vllm.distributed.device_communicators.pynccl_wrapper import NCCLLibrary
 from vllm.distributed.parallel_state import (
@@ -474,10 +476,30 @@ def test_ncclGetUniqueId():
     assert unique_id is not None
 
 
+def test_nccl_library_allows_missing_suspend_symbols(monkeypatch):
+    """NCCL before 2.29.7 remains usable without suspend/resume support."""
+
+    class FakeLibrary:
+        ncclGetVersion = Mock()
+
+    functions = [
+        pynccl_wrapper.Function("ncclGetVersion", None, []),
+        pynccl_wrapper.Function("ncclCommSuspend", None, []),
+        pynccl_wrapper.Function("ncclCommResume", None, []),
+    ]
+    library_path = "test-nccl-without-suspend.so"
+    monkeypatch.setattr(NCCLLibrary, "exported_functions", functions)
+    monkeypatch.setattr(pynccl_wrapper.ctypes, "CDLL", lambda path: FakeLibrary())
+
+    library = NCCLLibrary(library_path)
+
+    assert library.has_symbol("ncclGetVersion")
+    assert not library.has_symbol("ncclCommSuspend")
+    assert not library.has_symbol("ncclCommResume")
+
+
 def test_pynccl_suspend_resume_idempotent():
     """Repeated suspend/resume (e.g. staged wake-ups) reach NCCL once each."""
-    from unittest.mock import Mock
-
     comm = object.__new__(PyNcclCommunicator)
     comm.disabled = False
     comm._suspended = False
@@ -496,8 +518,6 @@ def test_pynccl_suspend_resume_idempotent():
 def test_pynccl_suspend_noop_without_symbol():
     """RCCL / NCCL < 2.29.7 lack ncclCommSuspend; suspend() must no-op, not
     crash, and resume() must then no-op too since nothing was suspended."""
-    from unittest.mock import Mock
-
     comm = object.__new__(PyNcclCommunicator)
     comm.disabled = False
     comm._suspended = False

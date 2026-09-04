@@ -425,12 +425,10 @@ class NCCLLibrary:
                         # Optional on NCCL versions older than 2.29.
                         continue
                     elif func.name in ("ncclCommSuspend", "ncclCommResume"):
-                        # RCCL doesn't export these; NCCL >= 2.29.7 does, and
-                        # vLLM's CUDA path already requires that version.
-                        # PyNcclCommunicator checks has_symbol() before
-                        # calling either.
-                        if current_platform.is_rocm():
-                            continue
+                        # NCCL versions older than 2.29.7 and RCCL do not
+                        # export these. PyNcclCommunicator checks has_symbol()
+                        # before calling either.
+                        continue
                     raise
             NCCLLibrary.path_to_dict_mapping[so_file] = _funcs
         self._funcs = NCCLLibrary.path_to_dict_mapping[so_file]
