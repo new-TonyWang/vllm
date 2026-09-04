@@ -182,16 +182,34 @@ hash 均为 `f022632b...`（该 hash 不包含 tensor 内容），实际 safeten
   weight transfer 增加 fail-closed 检查。
 - [x] 使用两张独立 H200 完成真实 packed NCCL tensor 内容回归，并用 Llama A/B
   cold/warm/cold 对照证明模型实际读取更新权重。
-- [ ] 将 V0–V9 的十五个旧结果降级为历史控制面证据；统一 verifier 必须要求
+- [x] 将 V0–V9 的十五个旧结果降级为历史控制面证据；统一 verifier 必须要求
   fail-closed 修复后的提交、NCCL 初始化证据，并优先使用 A/B 值变化证明数据面。
-- [ ] 重验低成本 dense/BF16：Qwen3-8B-2layer、Qwen2.5-7B 和 Mixtral-2layer。
-- [ ] 重验格式变换：GPTQ Marlin、online block FP8、online per-tensor FP8 MoE。
+- [x] 重验 `Qwen3-8B-2layer`：publisher rank 0 / GPU 1 的两 rank NCCL
+  communicator 完成初始化，25 tensors / 3,261,113,344 bytes / 4 buckets
+  全部发送，post-finish health 与 H200 `rc=0`。
+- [x] 重验其余低成本 dense/BF16：Qwen2.5-7B 完成 339 tensors /
+  15,231,233,024 bytes / 30 buckets；Mixtral-2layer 完成 65 tensors /
+  6,329,376,768 bytes / 4 buckets；两者统一 verifier 和 H200 `rc=0` 均通过。
+- [x] 重验格式变换：
+    - [x] GPTQ Marlin：Marlin kernel 选择证据、927 tensors /
+    5,575,277,568 bytes / 9 buckets、统一 verifier 和 H200 `rc=0` 均通过。
+    - [x] online block FP8：DeepGEMM kernel 选择证据、146 tensors /
+    2,471,628,800 bytes / 5 buckets、统一 verifier 和 H200 `rc=0` 均通过。
+    - [x] online per-tensor FP8 MoE：CUTLASS linear 与 TRITON FP8 MoE 选择证据、
+    65 tensors / 6,329,376,768 bytes / 4 buckets、统一 verifier 和 H200
+    `rc=0` 均通过。
 - [ ] 重验大型/多卡模型：Qwen3.8 FP8、Qwen3-30B FP8/BF16、Step-3.7、
   Kimi-K2 reduced、DeepSeek V3/V4 reduced。
 
 旧结果的 HTTP 事务、bucket accounting 和 H200 `rc=0` 仍可用于控制面回归，但在
 `59bdf7cf92` 之前没有证明 weight bytes 经 NCCL 到达 receiver；V11 完成前不得
 恢复为 NCCL data-plane PASS。
+
+统一 verifier 已写入 day0-kit commit `67a92f0`（诊断改进 `915a3c8`），会同时
+检查 result accounting、HTTP 生命周期、post-finish health、publisher client 的
+NCCL 版本和 `rank 0 / nranks N / Init COMPLETE`，并可选要求 A/B comparison PASS。
+它已在固定环境对 Qwen3-8B 与 Llama A/B 两份新结果返回 PASS，旧控制面结果因
+缺少 NCCL 初始化证据会 fail-closed。
 
 ## 批次 0：契约和调度骨架
 

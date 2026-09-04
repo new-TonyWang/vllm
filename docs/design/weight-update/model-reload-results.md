@@ -24,8 +24,8 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | Model/checkpoint | Protocol | Result | Evidence |
 | --- | --- | --- | --- |
 | `Qwen2.5-7B-Instruct-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `/inspire/hdd/global_user/wangtongyu-25057/day0-result.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
-| `Qwen2.5-7B-Instruct` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen25-full-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
-| `Qwen3-8B-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen3-8b-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen2.5-7B-Instruct` | day0-kit NCCL | **PASS** | `day0-qwen25-full-real-nccl-rerun.json`; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 339 tensors, 15,231,233,024 bytes, 30 buckets; verifier PASS; H200 job `720901bac91d`, `rc=0` |
+| `Qwen3-8B-2layer` | day0-kit NCCL | **PASS** | `day0-qwen3-8b-real-nccl-rerun.json`; publisher log proves NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 25 tensors, 3,261,113,344 bytes, 4 buckets; H200 job `ae8ebda6d236`, `rc=0` |
 | `Qwen3.8-27B-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded 3 shards in 2.75s and second generation completed |
 | `Qwen3-30B-A3B-FP8` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; persistent result `qwen30-reload.json` has identical pre/post output `" _"` |
 | `Qwen3-30B-A3B-FP8` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen30-rerun6.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
@@ -33,10 +33,10 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `Step-3.7-Flash` | day0-kit NCCL, TP=4 | LEGACY CONTROL ONLY | `day0-step37-full-day0-rerun.json`; TP runtime used NCCL, but weight-transfer data is unproven before `59bdf7cf92` |
 | `Kimi-K2-Instruct-0905-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-kimi-k2-2layer-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
 | `Llama-3.2-1B-Instruct` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-llama32-1b-day0-rerun.json`; superseded by the verified A/B row below |
-| `Llama-3.2-1B-Instruct` online block FP8 | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-llama32-online-block-fp8-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
-| `Mixtral-8x7B-Instruct-v0.1-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-mixtral-2layer-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
-| `Mixtral-8x7B-Instruct-v0.1-2layer` online per-tensor FP8 | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-mixtral-online-tensor-fp8-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
-| `Qwen2.5-7B-Instruct-GPTQ-Int4` | day0-kit NCCL, Marlin | LEGACY CONTROL ONLY | `day0-qwen25-gptq-marlin-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Llama-3.2-1B-Instruct` online block FP8 | day0-kit NCCL | **PASS** | `day0-llama32-online-block-fp8-real-nccl-rerun.json`; DeepGEMM online block-FP8 kernel selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 146 tensors, 2,471,628,800 bytes, 5 buckets; verifier PASS; H200 job `79491f51e73d`, `rc=0` |
+| `Mixtral-8x7B-Instruct-v0.1-2layer` | day0-kit NCCL | **PASS** | `day0-mixtral-2layer-real-nccl-rerun.json`; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 65 tensors, 6,329,376,768 bytes, 4 buckets; verifier PASS; H200 job `731feb61e985`, `rc=0` |
+| `Mixtral-8x7B-Instruct-v0.1-2layer` online per-tensor FP8 | day0-kit NCCL | **PASS** | `day0-mixtral-online-tensor-fp8-real-nccl-rerun.json`; CUTLASS online linear and TRITON FP8 MoE selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 65 tensors, 6,329,376,768 bytes, 4 buckets; verifier PASS; H200 job `19d780454524`, `rc=0` |
+| `Qwen2.5-7B-Instruct-GPTQ-Int4` | day0-kit NCCL, Marlin | **PASS** | `day0-qwen25-gptq-marlin-real-nccl-rerun.json`; Marlin kernel selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 927 tensors, 5,575,277,568 bytes, 9 buckets; verifier PASS; H200 job `49320ed2015d`, `rc=0` |
 | `DeepSeek-V3-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded the checkpoint and second generation completed |
 | `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-deepseek-v3-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
 | `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-deepseek-v4-rerun5.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
@@ -89,6 +89,13 @@ norm is zero before finish and tied embedding/lm_head storage is restored after
 finish. The full fixed-token comparison reports all checks true: each oracle is
 repeatable, cold-A differs from warm-B, and warm-B exactly equals independent
 cold-B for token IDs, completion logprobs, and prompt logprobs.
+
+The day0-kit verifier at commit `67a92f0` (diagnostic follow-up `915a3c8`)
+requires both control-plane lifecycle/accounting and a completed publisher-side
+NCCL rank-0 communicator with the expected transfer world size. It optionally
+requires an A/B comparison result. In the fixed environment its tests pass and
+it accepts the new Qwen3-8B and Llama A/B results; a synthetic legacy result
+with only `send_weights_completed=true` is rejected.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.
