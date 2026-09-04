@@ -180,7 +180,7 @@ def packed_nccl_broadcast_producer(
             if chunk is None:
                 break
             # Pack the tensors and call broadcast collective
-            group.broadcast(chunk.packed_tensor, src=src)
+            group.broadcast(chunk.packed_tensor, src=src, stream=streams[buffer_idx])
             # Hold reference until this stream is synchronized
             in_flight[buffer_idx] = chunk
             # Move to the next buffer
@@ -251,7 +251,9 @@ def packed_nccl_broadcast_consumer(
                 packed_tensors[buffer_idx] = torch.empty(
                     packing_tensor_sizes[buffer_idx], dtype=torch.uint8, device=device
                 )
-                group.broadcast(packed_tensors[buffer_idx], src=src)
+                group.broadcast(
+                    packed_tensors[buffer_idx], src=src, stream=streams[buffer_idx]
+                )
                 # Load the packed tensor into the model
                 names, shapes, dtypes, tensor_sizes = zip(
                     *packing_tensor_meta_data[buffer_idx]
@@ -276,7 +278,11 @@ def packed_nccl_broadcast_consumer(
                         dtype=torch.uint8,
                         device=device,
                     )
-                    group.broadcast(packed_tensors[buffer_idx], src=src)
+                    group.broadcast(
+                        packed_tensors[buffer_idx],
+                        src=src,
+                        stream=streams[buffer_idx],
+                    )
                     # Load the packed tensor into the model
                     names, shapes, dtypes, tensor_sizes = zip(
                         *packing_tensor_meta_data[buffer_idx]

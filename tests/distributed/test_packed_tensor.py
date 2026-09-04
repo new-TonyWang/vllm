@@ -24,12 +24,16 @@ class MockCommunicationGroup:
 
     def __init__(self):
         self.broadcasted_tensors: list[torch.Tensor] = []
+        self.broadcast_streams: list[torch.cuda.Stream | None] = []
+        self.current_streams: list[torch.cuda.Stream] = []
         self.broadcast_count = 0
         self.device = torch.device("cuda:0")
 
-    def broadcast(self, tensor, src):
+    def broadcast(self, tensor, src, stream=None):
         """Mock broadcast that stores the tensor for later verification."""
         self.broadcasted_tensors.append(tensor.clone())
+        self.broadcast_streams.append(stream)
+        self.current_streams.append(torch.cuda.current_stream())
         self.broadcast_count += 1
 
 
@@ -39,10 +43,14 @@ class MockConsumerCommunicationGroup:
     def __init__(self, tensors_to_return: list[torch.Tensor]):
         self.tensors_to_return = tensors_to_return
         self.current_index = 0
+        self.broadcast_streams: list[torch.cuda.Stream | None] = []
+        self.current_streams: list[torch.cuda.Stream] = []
         self.device = torch.device("cuda:0")
 
-    def broadcast(self, tensor, src):
+    def broadcast(self, tensor, src, stream=None):
         """Mock broadcast that fills the tensor with pre-stored data."""
+        self.broadcast_streams.append(stream)
+        self.current_streams.append(torch.cuda.current_stream())
         if self.current_index < len(self.tensors_to_return):
             tensor.copy_(self.tensors_to_return[self.current_index])
             self.current_index += 1
@@ -96,6 +104,33 @@ class TestPackedBroadcastProducer:
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 class TestPackedBroadcastRoundtrip:
     """Test producer-consumer roundtrip behavior."""
+
+    def test_collectives_use_packing_streams(self):
+        """Keep NCCL operations ordered with packing and unpacking work."""
+        params = [("weight", torch.randn(10, device="cuda"))]
+        producer_group = MockCommunicationGroup()
+
+        packed_nccl_broadcast_producer(
+            iterator=iter(params),
+            group=producer_group,
+            src=0,
+            post_iter_func=lambda item: item[1],
+            buffer_size_bytes=1000,
+        )
+
+        consumer_group = MockConsumerCommunicationGroup(
+            producer_group.broadcasted_tensors
+        )
+        packed_nccl_broadcast_consumer(
+            iterator=iter(create_state_dict_info(params).items()),
+            group=consumer_group,
+            src=0,
+            post_unpack_func=lambda tensors: None,
+            buffer_size_bytes=1000,
+        )
+
+        assert producer_group.broadcast_streams == producer_group.current_streams
+        assert consumer_group.broadcast_streams == consumer_group.current_streams
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
     def test_roundtrip_different_dtypes(self, dtype):
