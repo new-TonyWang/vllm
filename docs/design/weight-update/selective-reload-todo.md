@@ -152,29 +152,46 @@ AutoGPTQ Marlin 支持条件，用于补齐最终验收矩阵的 Marlin/INT4 路
 
 ## 验证批次 V10：Llama BF16 A/B 输出对照
 
-- [ ] 从完整 `Llama-3.2-1B-Instruct` 构造结构相同的 B checkpoint，仅将
+- [x] 从完整 `Llama-3.2-1B-Instruct` 构造结构相同的 B checkpoint，仅将
   `model.norm.weight` 置零；保留 A checkpoint 不变并记录两个 manifest hash。
-- [ ] 在同一 server 上记录 cold-A oracle，使用 day0-kit 将 B checkpoint reload
+- [x] 在同一 server 上记录 cold-A oracle，使用 day0-kit 将 B checkpoint reload
   后记录 warm-B oracle，要求 A/B 结果不同且重复请求各自稳定。
-- [ ] 独立 cold-start B server 并记录 cold-B oracle，要求 warm-B 与 cold-B 的
+- [x] 独立 cold-start B server 并记录 cold-B oracle，要求 warm-B 与 cold-B 的
   token IDs、logprobs 和 prompt logprobs 一致。
-- [ ] 核对 B 更新的 start/update/finish、post-finish health、epoch/version、完整
+- [x] 核对 B 更新的 start/update/finish、post-finish health、epoch/version、完整
   tensor/byte accounting、detached H200 `rc=0`，并加入统一 verifier。
 
-当前进展（2026-09-04）：A/B checkpoint 和五个 packed NCCL bucket 的事务均可
-完成，但阶段探针显示 receiver 在 bucket 0 收到的 `model.embed_tokens.weight`
-仍为全零，而 publisher 发送前数值与 A 完全一致（min=-0.3125,
-max=0.361328125, mean=-9.357804083265364e-05）。因此 V10 暂不通过，不能把
-`send_weights_completed=true` 当作 correctness 证据。已在 packed NCCL producer /
-consumer 中显式把 collective 绑定到对应 buffer stream，并加入 stream-order
-单测；该修复已推送到 `origin/fix/deepseek-v4-partial-reload`（commit
-`c95957f3b8`），但第二次 H200 阶段探针仍复现全零，说明还需继续下沉到
-packed buffer/NCCL wire 指纹检查。新增的真实 packed NCCL UID 回归测试尚未能
-进入 collective：固定环境的 pip NCCL 缺少 `ncclCommSuspend` 符号（H200 job
-`rc=1`），这属于测试装载阻塞，不计入模型结论。
+完成证据（2026-09-04）：固定环境使用 NCCL 2.28.9，但 vLLM 把 2.29.7 才有的
+`ncclCommSuspend`/`ncclCommResume` 当作 CUDA 必需符号；TCPStore 初始化捕获该
+异常后把 communicator 静默标记为 disabled，造成控制面全 200、数据面实际未发送。
+commit `59bdf7cf92` 将 suspend/resume 改为真正的可选符号，并让 weight transfer
+对 disabled communicator fail-closed。两张 H200 的真实 packed NCCL 回归测试
+通过，阶段探针中 bucket 0 receiver embedding 与 source 完全一致，finish 后
+embedding/lm_head 共享原 `data_ptr` 且 norm 全零。完整对照结果
+`day0-llama32-bf16-nccl-enabled-ab-ab-compare.json` 为 PASS：cold-A、warm-B、
+cold-B 各自重复稳定，A != warm-B，warm-B == cold-B。A/B 的 metadata manifest
+hash 均为 `f022632b...`（该 hash 不包含 tensor 内容），实际 safetensors SHA-256
+分别为 `1ff795ff...` 和 `0a93a136...`。
 
 本批用明确的权重值变化证明 reload 后推理实际读取了 B 权重；它补强同 checkpoint
 协议测试，但仍不替代后续 CUDA graph replay 与不同量化格式的 A/B 对照。
+
+## 验证批次 V11：真实 NCCL 数据面矩阵重验
+
+- [x] 修复旧 NCCL 缺少 suspend/resume 时 communicator 静默 disabled，并为
+  weight transfer 增加 fail-closed 检查。
+- [x] 使用两张独立 H200 完成真实 packed NCCL tensor 内容回归，并用 Llama A/B
+  cold/warm/cold 对照证明模型实际读取更新权重。
+- [ ] 将 V0–V9 的十五个旧结果降级为历史控制面证据；统一 verifier 必须要求
+  fail-closed 修复后的提交、NCCL 初始化证据，并优先使用 A/B 值变化证明数据面。
+- [ ] 重验低成本 dense/BF16：Qwen3-8B-2layer、Qwen2.5-7B 和 Mixtral-2layer。
+- [ ] 重验格式变换：GPTQ Marlin、online block FP8、online per-tensor FP8 MoE。
+- [ ] 重验大型/多卡模型：Qwen3.8 FP8、Qwen3-30B FP8/BF16、Step-3.7、
+  Kimi-K2 reduced、DeepSeek V3/V4 reduced。
+
+旧结果的 HTTP 事务、bucket accounting 和 H200 `rc=0` 仍可用于控制面回归，但在
+`59bdf7cf92` 之前没有证明 weight bytes 经 NCCL 到达 receiver；V11 完成前不得
+恢复为 NCCL data-plane PASS。
 
 ## 批次 0：契约和调度骨架
 

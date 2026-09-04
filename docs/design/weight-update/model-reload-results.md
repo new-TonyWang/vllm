@@ -13,7 +13,9 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 - Checkout: `/inspire/hdd/global_user/wangtongyu-25057/vllm-git-test`
 - day-0 kit: `/inspire/hdd/global_user/wangtongyu-25057/vllm-rl-day0-kit`
 - Code commits: selective-reload base `066ec5f59e52a8f6afd65dc2b9f6ecfcb820b051`;
-  DeepSeek V4 partial-bucket fix `cc1f202883`
+  DeepSeek V4 partial-bucket fix `cc1f202883`; packed wire negotiation
+  `38cf4a5`; packed stream ordering `c95957f3b8`; old-NCCL compatibility and
+  disabled-communicator fail-closed `59bdf7cf92`
 - day0-kit dtype fix: `c446b55`
 - NCCL settings: `backend=nccl`, `NCCL_SOCKET_IFNAME=lo`
 
@@ -21,25 +23,25 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 
 | Model/checkpoint | Protocol | Result | Evidence |
 | --- | --- | --- | --- |
-| `Qwen2.5-7B-Instruct-2layer` | day0-kit NCCL | PASS | `/inspire/hdd/global_user/wangtongyu-25057/day0-result.json`; `send_weights_completed=true`, `weight_epoch=1`, 27 tensors, 3,112,227,840 bytes; H200 `rc=0` |
-| `Qwen2.5-7B-Instruct` | day0-kit NCCL | PASS | `day0-qwen25-full-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 339 tensors, 15,231,233,024 bytes, 30 buckets; H200 `rc=0` |
-| `Qwen3-8B-2layer` | day0-kit NCCL | PASS | `day0-qwen3-8b-day0.json`; `send_weights_completed=true`, epoch/update version 1, 25 tensors, 3,261,113,344 bytes, 4 buckets; H200 `rc=0` |
+| `Qwen2.5-7B-Instruct-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `/inspire/hdd/global_user/wangtongyu-25057/day0-result.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen2.5-7B-Instruct` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen25-full-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen3-8B-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen3-8b-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
 | `Qwen3.8-27B-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded 3 shards in 2.75s and second generation completed |
 | `Qwen3-30B-A3B-FP8` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; persistent result `qwen30-reload.json` has identical pre/post output `" _"` |
-| `Qwen3-30B-A3B-FP8` | day0-kit NCCL | PASS | `day0-qwen30-rerun6.json`; `send_weights_completed=true`, epoch/update version 1, 37,491 tensors, 32,444,792,832 bytes, 52 buckets; H200 `rc=0` |
-| `Qwen3-30B-A3B` | day0-kit NCCL | PASS | `day0-qwen30-bf16-full-day0.json`; `send_weights_completed=true`, epoch/update version 1, 18,867 tensors, 61,064,245,248 bytes, 54 buckets; H200 `rc=0` |
-| `Step-3.7-Flash` | day0-kit NCCL, TP=4 | PASS | `day0-step37-full-day0-rerun.json`; inference/rendezvous world size 4/5, `send_weights_completed=true`, epoch/update version 1, 1,471 tensors, 402,730,656,512 bytes, 273 buckets; H200 detached job `rc=0` |
-| `Kimi-K2-Instruct-0905-2layer` | day0-kit NCCL | PASS | `day0-kimi-k2-2layer-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 2,351 tensors, 22,261,573,056 bytes, 5 buckets; H200 detached job `rc=0` |
-| `Llama-3.2-1B-Instruct` | day0-kit NCCL | PASS | `day0-llama32-1b-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 146 tensors, 2,471,628,800 bytes, 5 buckets, post-finish health 200; H200 detached job `rc=0` |
-| `Llama-3.2-1B-Instruct` online block FP8 | day0-kit NCCL | PASS | `day0-llama32-online-block-fp8-day0.json`; `Fp8PerBlockOnlineLinearMethod` with DeepGEMM, `send_weights_completed=true`, epoch/update version 1, 146 tensors, 2,471,628,800 bytes, 5 buckets, post-finish health 200; H200 detached job `rc=0` |
-| `Mixtral-8x7B-Instruct-v0.1-2layer` | day0-kit NCCL | PASS | `day0-mixtral-2layer-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 65 tensors, 6,329,376,768 bytes, 4 buckets, post-finish health 200; H200 detached job `rc=0` |
-| `Mixtral-8x7B-Instruct-v0.1-2layer` online per-tensor FP8 | day0-kit NCCL | PASS | `day0-mixtral-online-tensor-fp8-day0.json`; `Fp8PerTensorOnlineLinearMethod` with CUTLASS and TRITON FP8 MoE, `send_weights_completed=true`, epoch/update version 1, 65 tensors, 6,329,376,768 bytes, 4 buckets, post-finish health 200; H200 detached job `rc=0` |
-| `Qwen2.5-7B-Instruct-GPTQ-Int4` | day0-kit NCCL, Marlin | PASS | `day0-qwen25-gptq-marlin-day0.json`; `MarlinLinearKernel`, `send_weights_completed=true`, epoch/update version 1, 927 tensors, 5,575,277,568 bytes, 9 buckets, post-finish health 200; H200 detached job `rc=0` |
+| `Qwen3-30B-A3B-FP8` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen30-rerun6.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen3-30B-A3B` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen30-bf16-full-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Step-3.7-Flash` | day0-kit NCCL, TP=4 | LEGACY CONTROL ONLY | `day0-step37-full-day0-rerun.json`; TP runtime used NCCL, but weight-transfer data is unproven before `59bdf7cf92` |
+| `Kimi-K2-Instruct-0905-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-kimi-k2-2layer-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Llama-3.2-1B-Instruct` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-llama32-1b-day0-rerun.json`; superseded by the verified A/B row below |
+| `Llama-3.2-1B-Instruct` online block FP8 | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-llama32-online-block-fp8-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Mixtral-8x7B-Instruct-v0.1-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-mixtral-2layer-day0-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Mixtral-8x7B-Instruct-v0.1-2layer` online per-tensor FP8 | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-mixtral-online-tensor-fp8-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen2.5-7B-Instruct-GPTQ-Int4` | day0-kit NCCL, Marlin | LEGACY CONTROL ONLY | `day0-qwen25-gptq-marlin-day0.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
 | `DeepSeek-V3-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded the checkpoint and second generation completed |
-| `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v3-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 1,581 tensors, 15,802,320,320 bytes, 5 buckets; H200 `rc=0` |
-| `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v4-rerun5.json`; `send_weights_completed=true`, epoch/update version 1, 4,711 tensors, 12,844,479,536 bytes, 7 buckets; H200 `rc=0` |
-| `Qwen3.8-27B-FP8-2layer` | day0-kit NCCL | PASS | `day0-qwen38-rerun4.json`; `send_weights_completed=true`, epoch/update version 1, 398 tensors, 7,251,989,472 bytes, 7 buckets; H200 `rc=0` |
-| `Llama-3.2-1B-Instruct` → zero-`model.norm.weight` A/B probe | day0-kit NCCL, packed | **BLOCKED (correctness)** | Publisher bucket 0 source embedding is finite and matches A, but receiver stage probe is all zero after bucket 0 and after finish; both runs report `send_weights_completed=true`, H200 `rc=0`. Explicit buffer-stream binding (`c95957f3b8`) and stream-order unit test pass, but do not yet fix the wire result. |
+| `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-deepseek-v3-rerun.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-deepseek-v4-rerun5.json`; transaction completed before `59bdf7cf92`, so data transfer is unproven |
+| `Qwen3.8-27B-FP8-2layer` | day0-kit NCCL | LEGACY CONTROL ONLY | `day0-qwen38-rerun4.json`; its NCCL log is insufficient to isolate weight transfer from runtime communication |
+| `Llama-3.2-1B-Instruct` → zero-`model.norm.weight` A/B | day0-kit NCCL, packed | **PASS** | `day0-llama32-bf16-nccl-enabled-ab-ab-compare.json`; all five repeat/difference/cold-warm checks pass. `day0-llama32-bf16-nccl-enabled-ab-update.json`: 146 tensors, 2,471,628,800 bytes, epoch/version 1; NCCL 2.28.9; H200 job `93794cf12aff`, `rc=0` |
 
 ## Day-0 rerun requirements
 
@@ -74,18 +76,19 @@ reports `send_weights_completed=true`, and the completed H200 workload returns
 PASS row's JSON and matching server log. It checks the NCCL backend and trainer
 transport, start/update/finish ordering, bucket indices and aggregate
 tensor/byte counts, epoch/update version, and `send_weights_completed=true`.
-The fifteen-case audit completed on H200 with `status=ok rc=0`. It also
-checks inference and rendezvous world sizes: 4/5 for the TP=4 Step server and
-1/2 for each single-rank server.
+The original fifteen-case audit checked HTTP lifecycle and accounting, but it
+predated `59bdf7cf92`. Thirteen of its logs have no NCCL initialization marker;
+the remaining Qwen3.8 and TP=4 Step NCCL markers
+cannot distinguish weight transfer from runtime process-group traffic. Those
+rows are therefore historical control-plane evidence pending V11 reruns.
 
-The V10 Llama A/B correctness probe is intentionally excluded from the PASS
-matrix. Its stage JSONs show a source/receiver divergence before finalization:
-`day0-llama32-bf16-packed-stream-fixed-probe-stage-source-bucket-0.json` has
-the original embedding range, while the corresponding `after-bucket-0` and
-`after-finish` files are all zero. A real packed NCCL UID regression test was
-also added, but its H200 run stopped during test-process NCCL loading because
-the fixed environment's `libnccl.so.2` lacks `ncclCommSuspend`; no collective
-correctness claim is made from that failed run.
+The accepted V10 run fixes the data-plane gap. A two-GPU packed NCCL integration
+test passes with the fixed environment's NCCL 2.28.9. The model stage probe then
+shows the source and receiver embedding range match after bucket 0, while the B
+norm is zero before finish and tied embedding/lm_head storage is restored after
+finish. The full fixed-token comparison reports all checks true: each oracle is
+repeatable, cold-A differs from warm-B, and warm-B exactly equals independent
+cold-B for token IDs, completion logprobs, and prompt logprobs.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.
