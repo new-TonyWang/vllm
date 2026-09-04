@@ -23,6 +23,23 @@ Mega-MoE 的 DeepSeek V4 显式 fallback。以下勾选项表示已验证的子�
 未勾选项仍是前五批次的待办，不将 H200 NCCL 传输成功误认为 selective
 reload 全量完成。
 
+## 验证批次 V0：day0 NCCL 模型矩阵和运行基础设施
+
+- [x] 固定唯一 vLLM Python、源码 checkout、day0-kit 和模型目录。
+- [x] 在 H200 容器内构建并导入主扩展、MoE 扩展和 FlashMLA 扩展。
+- [x] Qwen2.5-7B、Qwen3.8-27B-FP8、Qwen3-30B-A3B-FP8、
+  DeepSeek-V3-FP8 完成 start/update/finish，且
+  `send_weights_completed=true`。
+- [x] 为 `ai4qz` 增加 `run --detach`，验证 terminal 删除后任务、日志和退出码
+  仍可用。
+- [x] day0 publisher 支持 DeepSeek V4 checkpoint 的 `F8_E8M0` scale tensor。
+- [x] layerwise transaction 中延迟 DeepSeek V4 模型级 post-load，避免 partial
+  bucket 对 meta tensor 做派生计算。
+- [x] DeepSeek V4 完整通过 NCCL reload，并保存结果 JSON 与 H200 `rc=0`。
+
+本批只验证传输、loader 生命周期和当前已 opt-in 的派生状态；不替代下列 backend
+审计与最终 CUDA graph replay 验收。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
