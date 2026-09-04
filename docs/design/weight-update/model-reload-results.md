@@ -15,8 +15,9 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 - Code commits: selective-reload base `066ec5f59e52a8f6afd65dc2b9f6ecfcb820b051`;
   DeepSeek V4 partial-bucket fix `cc1f202883`; packed wire negotiation
   `38cf4a5`; packed stream ordering `c95957f3b8`; old-NCCL compatibility and
-  disabled-communicator fail-closed `59bdf7cf92`
-- day0-kit dtype fix: `c446b55`
+  disabled-communicator fail-closed `59bdf7cf92`; post-update cache invalidation
+  `730eab3782`
+- day0-kit dtype fix: `c446b55`; configurable prefix-cache oracle `152c2c0`
 - NCCL settings: `backend=nccl`, `NCCL_SOCKET_IFNAME=lo`
 
 ## Results
@@ -42,6 +43,7 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | **PASS** | `day0-deepseek-v4-real-nccl-rerun2.json`; DeepGEMM FP8, fp8_ds_mla KV cache, and MARLIN MXFP4 MoE selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 4,711 tensors, 12,844,479,536 bytes, 7 buckets; verifier PASS; H200 job `162b2ff0ae52`, `rc=0` |
 | `Qwen3.8-27B-FP8-2layer` | day0-kit NCCL | **PASS** | `day0-qwen38-real-nccl-rerun.json`; DeepGEMM FP8 kernel selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 398 tensors, 7,251,989,472 bytes, 7 buckets; verifier PASS; H200 job `891707d27c82`, `rc=0` |
 | `Llama-3.2-1B-Instruct` → zero-`model.norm.weight` A/B | day0-kit NCCL, packed | **PASS** | `day0-llama32-bf16-nccl-enabled-ab-ab-compare.json`; all five repeat/difference/cold-warm checks pass. `day0-llama32-bf16-nccl-enabled-ab-update.json`: 146 tensors, 2,471,628,800 bytes, epoch/version 1; NCCL 2.28.9; H200 job `93794cf12aff`, `rc=0` |
+| `Llama-3.2-1B-Instruct` → zero-layer-0-`v_proj` A/B with prefix cache | day0-kit NCCL, packed | **PASS** | `day0-v12-prefix-cache-fixed-ab-compare.json`; no manual reset endpoint; cold-A differs from warm-B and warm-B exactly equals cold-B for token IDs and completion logprobs. 146 tensors, 2,471,628,800 bytes, 5 buckets; H200 job `ad8abb41a011`, `rc=0` |
 
 ## Day-0 rerun requirements
 
@@ -96,6 +98,17 @@ NCCL rank-0 communicator with the expected transfer world size. It optionally
 requires an A/B comparison result. In the fixed environment its tests pass and
 it accepts the new Qwen3-8B and Llama A/B results; a synthetic legacy result
 with only `send_weights_completed=true` is rejected.
+
+The V12 prefix-cache oracle uses a 36-token prompt without prompt logprobs,
+because prompt-logprob requests currently bypass prefix-cache queries. On the
+pre-fix code, zeroing layer 0 `v_proj` left warm-B on A's cached output while an
+independent cold-B produced a different token sequence; metrics recorded 96
+cumulative hit tokens after the two warm-B requests. Commit `730eab3782`
+invalidates local and connector prefix state, renderer/worker multimodal state,
+and encoder state before publishing the new weight version. The same run then
+produced warm-B == cold-B, with 64 cumulative hit tokens: the first warm-B
+request rebuilt B's cache and the repeat hit it. Four synchronous/asynchronous
+ordering and invalidation-failure tests pass in the fixed environment.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.

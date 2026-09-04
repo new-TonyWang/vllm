@@ -238,10 +238,11 @@ Qwen2.5 重验和 Llama A/B 重验覆盖。
 
 ## 验证批次 V12：缓存一致性与事务失败语义
 
-- [ ] 使用 Llama A/B 先以 A 权重填充 prefix cache，确认重复请求产生 cache hit；
-  不调用 `/reset_prefix_cache` reload B，并将 warm-B 与独立 cold-B 的 token IDs、
-  completion logprobs 和 prompt logprobs 对照。
-- [ ] 成功 `finish_weight_update` 后统一失效 prefix cache、multimodal cache 和
+- [x] 使用 Llama A/B 先以 A 权重填充 prefix cache，确认重复请求产生 cache hit；
+  不调用 `/reset_prefix_cache` reload B，并将 warm-B 与独立 cold-B 的 token IDs 和
+  completion logprobs 精确对照。当前带 prompt logprobs 的请求不会进入 prefix-cache
+  查询，因此不能用它验证陈旧 KV。
+- [x] 成功 `finish_weight_update` 后统一失效 prefix cache、multimodal cache 和
   encoder cache；缓存清理完成前不得发布新的 `weight_version`。
 - [ ] 明确 cache generation 与 weight generation 的提交顺序，禁止新权重复用旧
   权重生成的 KV block；cache invalidation 失败时 transaction 必须 fail-closed。
@@ -256,6 +257,16 @@ Qwen2.5 重验和 Llama A/B 重验覆盖。
 本批先解决成功提交后的陈旧缓存这一可独立验证的问题，再以失败注入固定 transaction
 边界。HTTP 200、`send_weights_completed=true` 或 NCCL bytes 到达均不能单独证明
 cache coherence 或 rollback 正确。
+
+阶段证据（2026-09-04）：只清零最终 norm 的旧 A/B 变体不改变 prefix KV，不能作为
+敏感 oracle。改为清零 `model.layers.0.self_attn.v_proj.weight` 后，未修复版本在
+32-token prefix hit 下让 warm-B 继续输出 A 的 `[12366, 13, 128009]`，而 cold-B
+输出 `[128009]`，复现陈旧 KV。commit `730eab3782` 在同步和异步 finish 中按
+prefix（含 connector）→ multimodal → encoder → version 顺序提交；四个顺序/失败
+单测通过。修复后 warm-B 与 cold-B 均为 `[128009]`，五项 A/B 精确检查全部通过；
+warm 阶段累计 prefix hits 从未修复的 96 降为 64，证明 reload 后第一次 B 请求未
+复用 A cache、第二次 B 请求仍能正常命中新 cache。H200 job `ad8abb41a011` 返回
+`[h200_ncu] status=ok rc=0`。
 
 ## 验证批次 V13：storage ownership 与 backend 收口
 
