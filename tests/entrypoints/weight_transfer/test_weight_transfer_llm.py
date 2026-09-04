@@ -10,7 +10,7 @@ actual NCCL communication.
 import os
 import weakref
 from dataclasses import dataclass
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import torch
@@ -23,6 +23,8 @@ from vllm.distributed.weight_transfer.base import (
     WeightTransferUpdateInfo,
     WeightTransferUpdateRequest,
 )
+from vllm.entrypoints.llm import LLM
+from vllm.v1.engine.async_llm import AsyncLLM
 
 from ...utils import create_new_process_for_each_test
 
@@ -99,6 +101,79 @@ def mock_create_engine(config, vllm_config, device, model):
 
 
 # --- Tests ---
+
+
+def test_finish_weight_update_invalidates_caches_before_version():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+    llm.reset_prefix_cache = MagicMock(return_value=True)
+    llm.reset_mm_cache = MagicMock()
+    order = []
+    llm.llm_engine.collective_rpc.side_effect = lambda *_: order.append("finish")
+    llm.reset_prefix_cache.side_effect = lambda **_: order.append("prefix") or True
+    llm.reset_mm_cache.side_effect = lambda: order.append("mm")
+    llm.llm_engine.reset_encoder_cache.side_effect = lambda: order.append("encoder")
+    llm.llm_engine.set_weight_version.side_effect = lambda *_: order.append("version")
+
+    llm.finish_weight_update("step-42")
+
+    assert order == ["finish", "prefix", "mm", "encoder", "version"]
+    llm.reset_prefix_cache.assert_called_once_with(
+        reset_running_requests=True, reset_connector=True
+    )
+
+
+def test_finish_weight_update_rejects_failed_prefix_cache_invalidation():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+    llm.reset_prefix_cache = MagicMock(return_value=False)
+    llm.reset_mm_cache = MagicMock()
+
+    with pytest.raises(RuntimeError, match="invalidate prefix cache"):
+        llm.finish_weight_update("step-42")
+
+    llm.reset_mm_cache.assert_not_called()
+    llm.llm_engine.reset_encoder_cache.assert_not_called()
+    llm.llm_engine.set_weight_version.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_finish_weight_update_invalidates_caches_before_version():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    order = []
+    llm.collective_rpc = AsyncMock(side_effect=lambda *_: order.append("finish"))
+    llm.reset_prefix_cache = AsyncMock(
+        side_effect=lambda **_: order.append("prefix") or True
+    )
+    llm.reset_mm_cache = AsyncMock(side_effect=lambda: order.append("mm"))
+    llm.reset_encoder_cache = AsyncMock(side_effect=lambda: order.append("encoder"))
+    llm.update_weight_version = AsyncMock(
+        side_effect=lambda *_: order.append("version")
+    )
+
+    await llm.finish_weight_update("step-42")
+
+    assert order == ["finish", "prefix", "mm", "encoder", "version"]
+    llm.reset_prefix_cache.assert_awaited_once_with(
+        reset_running_requests=True, reset_connector=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_finish_rejects_failed_prefix_cache_invalidation():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    llm.collective_rpc = AsyncMock()
+    llm.reset_prefix_cache = AsyncMock(return_value=False)
+    llm.reset_mm_cache = AsyncMock()
+    llm.reset_encoder_cache = AsyncMock()
+    llm.update_weight_version = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="invalidate prefix cache"):
+        await llm.finish_weight_update("step-42")
+
+    llm.reset_mm_cache.assert_not_awaited()
+    llm.reset_encoder_cache.assert_not_awaited()
+    llm.update_weight_version.assert_not_awaited()
 
 
 @create_new_process_for_each_test()

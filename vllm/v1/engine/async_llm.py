@@ -1222,6 +1222,12 @@ class AsyncLLM(EngineClient):
     async def finish_weight_update(self, weight_version: str | None = None) -> None:
         """Finish the weight update and set its version if provided."""
         await self.collective_rpc("finish_weight_update")
+        if not await self.reset_prefix_cache(
+            reset_running_requests=True, reset_connector=True
+        ):
+            raise RuntimeError("Failed to invalidate prefix cache after weight update.")
+        await self.reset_mm_cache()
+        await self.reset_encoder_cache()
         if weight_version is not None:
             await self.update_weight_version(weight_version)
 

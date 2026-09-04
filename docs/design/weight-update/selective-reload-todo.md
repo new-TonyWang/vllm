@@ -236,6 +236,50 @@ Step-3.7 使用 TP=4 server 和 GPU 4 publisher，transfer world size 为 5。�
 表中仅保留 Qwen2.5 reduced 和 Llama same-checkpoint 两项历史记录，分别由完整
 Qwen2.5 重验和 Llama A/B 重验覆盖。
 
+## 验证批次 V12：缓存一致性与事务失败语义
+
+- [ ] 使用 Llama A/B 先以 A 权重填充 prefix cache，确认重复请求产生 cache hit；
+  不调用 `/reset_prefix_cache` reload B，并将 warm-B 与独立 cold-B 的 token IDs、
+  completion logprobs 和 prompt logprobs 对照。
+- [ ] 成功 `finish_weight_update` 后统一失效 prefix cache、multimodal cache 和
+  encoder cache；缓存清理完成前不得发布新的 `weight_version`。
+- [ ] 明确 cache generation 与 weight generation 的提交顺序，禁止新权重复用旧
+  权重生成的 KV block；cache invalidation 失败时 transaction 必须 fail-closed。
+- [ ] 为 START 后已经写入 live storage 的异常定义语义：要么恢复完整旧 generation，
+  要么停止 serving，禁止在混合 generation 上继续推理。
+- [ ] 拒绝缺失 tensor、重复 tensor name、未声明的 sparse update、bucket 中断和任一
+  receiver rank 失败；所有 rank 必须对 generation、tensor accounting 和最终状态达成
+  一致。
+- [ ] 为同步 `LLM`、`AsyncLLM` 和 draft-model update 覆盖相同的提交与缓存失效
+  契约，并补充失败注入单元测试。
+
+本批先解决成功提交后的陈旧缓存这一可独立验证的问题，再以失败注入固定 transaction
+边界。HTTP 200、`send_weights_completed=true` 或 NCCL bytes 到达均不能单独证明
+cache coherence 或 rollback 正确。
+
+## 验证批次 V13：storage ownership 与 backend 收口
+
+- [ ] 以 storage/alias group 为更新所有权单位，覆盖 tied embedding/lm_head、共享
+  Parameter 和跨 module alias；同一 storage 不得被重复写入或只刷新部分别名。
+- [ ] 建立 graph-visible state census，纳入非 Parameter tensor、buffer、量化 workspace
+  和 backend descriptor；地址稳定性验收不能只遍历 `named_parameters()`。
+- [ ] per-tensor FP8 restore 保留 `ModelWeightParameter` 等 Parameter 子类、weight
+  loader、shard metadata 和自定义属性；禁止以普通 `Parameter` 替换后仅恢复 shape。
+- [ ] mixed selective/layerwise 模型按实际 module/backend 分区执行，禁止任一 fallback
+  触发无关 module 的 model-wide post-load 初始化。
+- [ ] `supports_selective_reload()` 基于运行时选中的 backend/kernel method，而非只看
+  method class；backend 变化或能力不确定时显式 fallback。
+- [ ] online quantization 先完成 checkpoint name 和 TP shard routing，再对本 rank 的
+  shard 做 quantize/pack；补齐 fused expert、scale 和 padding 的覆盖。
+- [ ] sharded RDT 在 commit 前调用并验证 `drain_pending()`，保证异步传输全部完成且
+  错误已传播。
+- [ ] 用 CUDA graph capture/replay 验证 reload 前后所有 graph-visible 地址和 kernel
+  descriptor 有效，并用不同 A/B 权重证明 replay 读取新 generation。
+
+本批依赖 V12 的 generation/transaction 契约。开始实现前需要对照 RFC 相关工作
+`#49459`、`#51378`、`#53438`、`#49789` 和 `#52497`，避免复制已有实现或建立冲突
+的更新协议。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的

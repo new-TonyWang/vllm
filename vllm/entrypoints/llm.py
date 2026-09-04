@@ -895,6 +895,12 @@ class LLM(BeamSearchOfflineMixin, PoolingOfflineMixin, OfflineInferenceMixin):
     def finish_weight_update(self, weight_version: str | None = None) -> None:
         """Finish the weight update and set its version if provided."""
         self.llm_engine.collective_rpc("finish_weight_update")
+        if not self.reset_prefix_cache(
+            reset_running_requests=True, reset_connector=True
+        ):
+            raise RuntimeError("Failed to invalidate prefix cache after weight update.")
+        self.reset_mm_cache()
+        self.llm_engine.reset_encoder_cache()
         if weight_version is not None:
             self.llm_engine.set_weight_version(weight_version)
 
