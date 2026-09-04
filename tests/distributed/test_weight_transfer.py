@@ -37,6 +37,7 @@ from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
     WeightTransferUpdateRequest,
     layerwise_groups,
+    validate_new_parameter_names,
 )
 from vllm.distributed.weight_transfer.ipc_engine import (
     IPCTrainerInitInfo,
@@ -156,6 +157,20 @@ class TestNCCLWeightTransferUpdateInfoValidation:
     def test_empty_lists_valid(self):
         info = NCCLWeightTransferUpdateInfo(names=[], dtype_names=[], shapes=[])
         assert len(info.names) == 0
+
+    def test_duplicate_names_raise(self):
+        with pytest.raises(ValueError, match="already received"):
+            NCCLWeightTransferUpdateInfo(
+                names=["layer.weight", "layer.weight"],
+                dtype_names=["float32", "float32"],
+                shapes=[[10, 10], [10, 10]],
+            )
+
+    def test_name_received_in_prior_bucket_raises(self):
+        with pytest.raises(ValueError, match="layer.weight"):
+            validate_new_parameter_names(
+                ["layer.weight"], previously_received={"layer.weight"}
+            )
 
 
 # --- Unit Tests: SparseNCCLWeightTransferUpdateInfo Validation ---
@@ -350,6 +365,21 @@ def test_nccl_receive_weights_rejects_packed_wire_mode_mismatch():
     )
 
     with pytest.raises(ValueError, match="packed wire mode mismatch"):
+        engine.receive_weights(update_info)
+
+
+def test_nccl_receive_weights_rejects_name_from_prior_bucket():
+    engine = object.__new__(NCCLWeightTransferEngine)
+    engine.model_update_group = object()
+    engine.packed = True
+    engine._updated_parameter_names = {"test.weight"}
+    update_info = NCCLWeightTransferUpdateInfo(
+        names=["test.weight"],
+        dtype_names=["bfloat16"],
+        shapes=[[4, 4]],
+    )
+
+    with pytest.raises(ValueError, match="already received"):
         engine.receive_weights(update_info)
 
 
@@ -725,6 +755,15 @@ class TestIPCWeightTransferUpdateInfoValidation:
         assert info.dtype_names == ["float32"]
         assert info.shapes == [[10, 10]]
         assert len(info.ipc_handles) == 1
+
+    def test_duplicate_names_raise(self):
+        with pytest.raises(ValueError, match="already received"):
+            IPCWeightTransferUpdateInfo(
+                names=["layer.weight", "layer.weight"],
+                dtype_names=["float32", "float32"],
+                shapes=[[10, 10], [10, 10]],
+                ipc_handles=[{}, {}],
+            )
 
     def test_mismatched_dtype_names_raises(self):
         if torch.accelerator.device_count() < 1:

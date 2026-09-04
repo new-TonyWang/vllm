@@ -21,6 +21,7 @@ from vllm.distributed.weight_transfer.base import (
     WeightTransferEngine,
     WeightTransferInitInfo,
     WeightTransferUpdateInfo,
+    validate_new_parameter_names,
 )
 
 if TYPE_CHECKING:
@@ -78,6 +79,7 @@ class IPCWeightTransferUpdateInfo(WeightTransferUpdateInfo):
     Required when packed=True, unused otherwise."""
 
     def __post_init__(self):
+        validate_new_parameter_names(self.names)
         if self.ipc_handles_pickled is not None:
             if self.ipc_handles is not None:
                 raise ValueError(
@@ -208,6 +210,7 @@ class IPCWeightTransferEngine(
         # rebuilt on the device the model lives on.
         device_index = self.device.index
 
+        validate_new_parameter_names(update_info.names, self._updated_parameter_names)
         self._updated_parameter_names.update(update_info.names)
         if self.packed:
             if update_info.tensor_sizes is None:

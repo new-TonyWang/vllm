@@ -34,6 +34,23 @@ WeightTransferUpdatePayload = dict[str, Any] | list[dict[str, Any]]
 # channel. The built-in `ModuleSource` uses `materialize_full_tensor`.
 
 
+def validate_new_parameter_names(
+    names: Collection[str], previously_received: Collection[str] = ()
+) -> None:
+    """Reject duplicate parameter names within or across update chunks."""
+    seen = set(previously_received)
+    duplicates: list[str] = []
+    for name in names:
+        if name in seen and name not in duplicates:
+            duplicates.append(name)
+        seen.add(name)
+    if duplicates:
+        raise ValueError(
+            "Weight update contains parameter names already received in this "
+            f"transaction: {duplicates[:20]!r}"
+        )
+
+
 def _stack_key(name: str) -> tuple[str, int] | None:
     """``(prefix, index)`` of the OUTERMOST integer segment, or None if there is
     none.

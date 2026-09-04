@@ -20,8 +20,11 @@ from vllm.v1.worker.gpu_worker import Worker
 class _RecordingEngine:
     """Minimal stand-in for a weight transfer engine."""
 
-    def __init__(self, raise_on_update: bool = False):
+    def __init__(
+        self, raise_on_update: bool = False, raise_on_finish: bool = False
+    ) -> None:
         self.raise_on_update = raise_on_update
+        self.raise_on_finish = raise_on_finish
         self.started = False
         self.finished = False
         self.reset_count = 0
@@ -44,6 +47,8 @@ class _RecordingEngine:
 
     def finish_weight_update(self) -> None:
         self._record_config()
+        if self.raise_on_finish:
+            raise ValueError("finish boom")
         self.finished = True
 
     def reset_weight_update_target(self) -> None:
@@ -68,6 +73,7 @@ def _make_worker(engine: _RecordingEngine | None) -> Worker:
     worker.weight_transfer_engine = engine
     worker._weight_update_active = False
     worker._weight_update_is_draft = False
+    worker._weight_update_failed = False
     worker.model_runner = _RecordingModelRunner()
     return worker
 
@@ -189,7 +195,7 @@ def test_finish_without_start_raises():
         Worker.finish_weight_update(worker)
 
 
-def test_update_resets_active_on_error():
+def test_update_failure_disables_serving_until_full_reload():
     engine = _RecordingEngine(raise_on_update=True)
     worker = _make_worker(engine)
     Worker.start_weight_update(worker)
@@ -197,9 +203,30 @@ def test_update_resets_active_on_error():
     with pytest.raises(ValueError, match="boom"):
         Worker.update_weights(worker, {"names": ["w"]})
 
-    # A failed update ends the session so the next start is clean.
     assert engine.reset_count == 1
     assert worker._weight_update_active is False
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.start_weight_update(worker)
+
+    Worker.reload_weights(worker)
+    Worker.check_health(worker)
+
+
+def test_finish_failure_disables_serving_and_ends_session():
+    engine = _RecordingEngine(raise_on_finish=True)
+    worker = _make_worker(engine)
+    Worker.start_weight_update(worker)
+
+    with pytest.raises(ValueError, match="finish boom"):
+        Worker.finish_weight_update(worker)
+
+    assert engine.reset_count == 1
+    assert worker._weight_update_active is False
+    assert worker.model_runner.reset_lora_calls == 0
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
 
 
 def test_missing_engine_raises():

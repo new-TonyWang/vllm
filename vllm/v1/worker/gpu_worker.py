@@ -210,6 +210,7 @@ class Worker(WorkerBase):
         self.weight_transfer_engine: WeightTransferEngine | None = None
         self._weight_update_active = False
         self._weight_update_is_draft = False
+        self._weight_update_failed = False
 
         # Worker profiler. Enabled and configured through profiler_config.
         # Profiler wrapper is created lazily in profile() when start is called,
@@ -512,6 +513,7 @@ class Worker(WorkerBase):
     def reload_weights(self, *args, **kwargs) -> None:
         with set_current_vllm_config(self.vllm_config):
             self.model_runner.reload_weights(*args, **kwargs)
+        self._weight_update_failed = False
 
     @torch.inference_mode()
     def determine_available_memory(self) -> int:
@@ -1106,6 +1108,7 @@ class Worker(WorkerBase):
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
+        self._raise_if_weight_update_failed()
         return self.model_runner.sample_tokens(grammar_output)
 
     @torch.inference_mode()
@@ -1113,6 +1116,7 @@ class Worker(WorkerBase):
     def execute_model(
         self, scheduler_output: "SchedulerOutput"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
+        self._raise_if_weight_update_failed()
         intermediate_tensors = None
         forward_pass = scheduler_output.total_num_scheduled_tokens > 0
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
@@ -1282,8 +1286,15 @@ class Worker(WorkerBase):
         return self.model_runner.pin_lora(lora_id)
 
     def check_health(self) -> None:
-        # worker will always be healthy as long as it's running.
-        return
+        self._raise_if_weight_update_failed()
+
+    def _raise_if_weight_update_failed(self) -> None:
+        if self._weight_update_failed:
+            raise RuntimeError(
+                "A weight update failed after the transaction started; serving is "
+                "disabled because model storage may contain mixed generations. "
+                "Restart the worker or complete a full reload_weights recovery."
+            )
 
     def save_sharded_state(
         self,
@@ -1351,6 +1362,8 @@ class Worker(WorkerBase):
         self._check_weight_transfer_engine()
         assert self.weight_transfer_engine is not None
 
+        self._raise_if_weight_update_failed()
+
         if is_draft and not self.weight_transfer_engine.supports_draft_weight_update:
             raise RuntimeError(
                 f"{type(self.weight_transfer_engine).__name__} does not support "
@@ -1368,6 +1381,7 @@ class Worker(WorkerBase):
                 self._set_draft_weight_update_target()
             self.weight_transfer_engine.start_weight_update()
         except BaseException:
+            self._weight_update_failed = True
             self.weight_transfer_engine.reset_weight_update_target()
             raise
         self._weight_update_active = True
@@ -1406,6 +1420,7 @@ class Worker(WorkerBase):
                     local_update_info = update_info
                 self.weight_transfer_engine.update_weights(local_update_info)
             except BaseException:
+                self._weight_update_failed = True
                 self._weight_update_active = False
                 self.weight_transfer_engine.reset_weight_update_target()
                 raise
@@ -1420,8 +1435,13 @@ class Worker(WorkerBase):
                 "finish_weight_update called without a matching start_weight_update."
             )
 
-        with set_current_vllm_config(self.vllm_config):
-            self.weight_transfer_engine.finish_weight_update()
+        try:
+            with set_current_vllm_config(self.vllm_config):
+                self.weight_transfer_engine.finish_weight_update()
+        except BaseException:
+            self._weight_update_failed = True
+            raise
+        finally:
             self.weight_transfer_engine.reset_weight_update_target()
             self._weight_update_active = False
 

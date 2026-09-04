@@ -23,6 +23,7 @@ from vllm.distributed.weight_transfer.base import (
     WeightSource,
     WeightTransferEngine,
     WeightTransferUpdateInfo,
+    validate_new_parameter_names,
 )
 from vllm.distributed.weight_transfer.nccl_common import (
     NCCLWeightTransferInitInfo,
@@ -112,6 +113,7 @@ class NCCLWeightTransferUpdateInfo(WeightTransferUpdateInfo):
 
     def __post_init__(self):
         """Validate that all lists have the same length."""
+        validate_new_parameter_names(self.names)
         num_params = len(self.names)
         if len(self.dtype_names) != num_params:
             raise ValueError(
@@ -251,6 +253,7 @@ class NCCLWeightTransferEngine(
                 f"but update declared packed={update_info.packed}"
             )
 
+        validate_new_parameter_names(update_info.names, self._updated_parameter_names)
         self._updated_parameter_names.update(update_info.names)
 
         from vllm.model_executor.model_loader.mtp_validation import (
