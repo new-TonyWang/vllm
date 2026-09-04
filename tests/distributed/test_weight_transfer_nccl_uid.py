@@ -265,6 +265,7 @@ def trainer_broadcast_tensor_uid(
     world_size: int,
     tensor_shape: list[int],
     tensor_dtype: str,
+    packed: bool,
 ) -> dict:
     """Drive rank 0 via vLLM's own communicator from a pre-shared unique id.
 
@@ -311,7 +312,7 @@ def trainer_broadcast_tensor_uid(
         client=NoopClient(),
         source=ModuleSource(model),
         is_sender=True,
-        packed=False,
+        packed=packed,
     )
     engine.model_update_group = uid_init_process_group(
         base64.b64decode(uid_b64),
@@ -333,6 +334,7 @@ def trainer_broadcast_tensor_torch_free(
     world_size: int,
     tensor_shape: list[int],
     tensor_dtype: str,
+    packed: bool,
 ) -> dict:
     """Trainer peer that uses no torch and no PyNcclCommunicator (a JAX stand-in).
 
@@ -357,6 +359,7 @@ def trainer_broadcast_tensor_torch_free(
         ncclRedOpTypeEnum,
     )
 
+    assert not packed, "harness only wires unpacked tensors"
     assert tensor_dtype == "float32", "harness only wires float32"
     # Fill on the host and copy up (a plain H2D memcpy) so we neither use torch
     # nor make cupy JIT-compile a fill kernel (which needs NVRTC). All-ones lets
@@ -400,7 +403,7 @@ def trainer_broadcast_tensor_torch_free(
         nccl.ncclCommAbort(comm)
 
 
-def _run_uid_transfer(trainer_task) -> None:
+def _run_uid_transfer(trainer_task, *, packed: bool = False) -> None:
     """Mint a unique id, run the worker and the given trainer peer concurrently,
     and assert the tensor round-trips. Both ranks must enter init together --
     there is no store barrier on the UID path."""
@@ -420,13 +423,13 @@ def _run_uid_transfer(trainer_task) -> None:
             "rank_offset": 1,
             "world_size": world_size,
             "nccl_unique_id_b64": uid_b64,
-            "packed": False,
+            "packed": packed,
         },
         tensor_shape,
         tensor_dtype,
     )
     trainer_future = trainer_task.remote(
-        uid_b64, world_size, tensor_shape, tensor_dtype
+        uid_b64, world_size, tensor_shape, tensor_dtype, packed
     )
 
     try:
@@ -452,6 +455,15 @@ def test_nccl_weight_transfer_between_processes_uid():
     """Weight transfer over a pre-shared ncclUniqueId (no TCPStore), with both
     ranks on vLLM's ``PyNcclCommunicator``."""
     _run_uid_transfer(trainer_broadcast_tensor_uid)
+
+
+@pytest.mark.skipif(
+    torch.accelerator.device_count() < 2,
+    reason="Need at least 2 GPUs to run NCCL weight transfer test.",
+)
+def test_nccl_packed_weight_transfer_between_processes_uid():
+    """Packed transfer preserves tensor contents across real NCCL peers."""
+    _run_uid_transfer(trainer_broadcast_tensor_uid, packed=True)
 
 
 @pytest.mark.skipif(
