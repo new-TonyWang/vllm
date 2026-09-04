@@ -198,8 +198,26 @@ hash 均为 `f022632b...`（该 hash 不包含 tensor 内容），实际 safeten
     - [x] online per-tensor FP8 MoE：CUTLASS linear 与 TRITON FP8 MoE 选择证据、
     65 tensors / 6,329,376,768 bytes / 4 buckets、统一 verifier 和 H200
     `rc=0` 均通过。
-- [ ] 重验大型/多卡模型：Qwen3.8 FP8、Qwen3-30B FP8/BF16、Step-3.7、
-  Kimi-K2 reduced、DeepSeek V3/V4 reduced。
+- [x] 重验大型/多卡模型：
+    - [x] Qwen3.8 FP8 两层：DeepGEMM kernel 选择证据、398 tensors /
+    7,251,989,472 bytes / 7 buckets、统一 verifier 和 H200 `rc=0` 均通过。
+    - [x] Qwen3-30B FP8：DeepGEMM linear 与 TRITON FP8 MoE 选择证据、
+    37,491 tensors / 32,444,792,832 bytes / 52 buckets、统一 verifier 和 H200
+    `rc=0` 均通过。
+    - [x] Qwen3-30B BF16：TRITON unquantized MoE 选择证据、18,867 tensors /
+    61,064,245,248 bytes / 54 buckets、统一 verifier 和 H200 `rc=0` 均通过。
+    - [x] Step-3.7：TP=4 server、GPU 4 publisher、rank 0 / nranks 5 NCCL，
+    1,471 tensors / 402,730,656,512 bytes / 273 buckets、统一 verifier 和 H200
+    `rc=0` 均通过。
+    - [x] Kimi-K2 reduced：DeepGEMM FP8、FLASH_ATTN MLA 和 TRITON FP8 MoE
+    选择证据、2,351 tensors / 22,261,573,056 bytes / 5 buckets、统一 verifier
+    和 H200 `rc=0` 均通过。
+    - [x] DeepSeek V3 reduced：DeepGEMM FP8、FLASH_ATTN MLA 和 TRITON FP8
+    MoE 选择证据、1,581 tensors / 15,802,320,320 bytes / 5 buckets、统一
+    verifier 和 H200 `rc=0` 均通过。
+    - [x] DeepSeek V4 reduced：DeepGEMM FP8、fp8_ds_mla KV cache 和 MARLIN
+    MXFP4 MoE 选择证据、4,711 tensors / 12,844,479,536 bytes / 7 buckets、
+    统一 verifier 和 H200 `rc=0` 均通过。
 
 旧结果的 HTTP 事务、bucket accounting 和 H200 `rc=0` 仍可用于控制面回归，但在
 `59bdf7cf92` 之前没有证明 weight bytes 经 NCCL 到达 receiver；V11 完成前不得
@@ -210,6 +228,13 @@ hash 均为 `f022632b...`（该 hash 不包含 tensor 内容），实际 safeten
 NCCL 版本和 `rank 0 / nranks N / Init COMPLETE`，并可选要求 A/B comparison PASS。
 它已在固定环境对 Qwen3-8B 与 Llama A/B 两份新结果返回 PASS，旧控制面结果因
 缺少 NCCL 初始化证据会 fail-closed。
+
+V11 完成证据（2026-09-04）：所有重验项均由 publisher 在独立 GPU 上完成真实
+NCCL communicator 初始化，并通过统一 verifier。单卡项 transfer world size 为 2；
+Step-3.7 使用 TP=4 server 和 GPU 4 publisher，transfer world size 为 5。所有成功
+任务均有 `[h200_ncu] status=ok rc=0`。V11 目标中的旧控制面结果已由新结果取代；
+表中仅保留 Qwen2.5 reduced 和 Llama same-checkpoint 两项历史记录，分别由完整
+Qwen2.5 重验和 Llama A/B 重验覆盖。
 
 ## 批次 0：契约和调度骨架
 
