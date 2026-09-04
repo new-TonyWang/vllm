@@ -150,6 +150,32 @@ AutoGPTQ Marlin 支持条件，用于补齐最终验收矩阵的 Marlin/INT4 路
 本批专门覆盖 fused w1/w3 依赖同时到齐后重新量化的 MoE 路径；两层 checkpoint
 保留每层全部 8 个 expert，可验证融合参数的加载与完成 accounting。
 
+## 验证批次 V10：Llama BF16 A/B 输出对照
+
+- [ ] 从完整 `Llama-3.2-1B-Instruct` 构造结构相同的 B checkpoint，仅将
+  `model.norm.weight` 置零；保留 A checkpoint 不变并记录两个 manifest hash。
+- [ ] 在同一 server 上记录 cold-A oracle，使用 day0-kit 将 B checkpoint reload
+  后记录 warm-B oracle，要求 A/B 结果不同且重复请求各自稳定。
+- [ ] 独立 cold-start B server 并记录 cold-B oracle，要求 warm-B 与 cold-B 的
+  token IDs、logprobs 和 prompt logprobs 一致。
+- [ ] 核对 B 更新的 start/update/finish、post-finish health、epoch/version、完整
+  tensor/byte accounting、detached H200 `rc=0`，并加入统一 verifier。
+
+当前进展（2026-09-04）：A/B checkpoint 和五个 packed NCCL bucket 的事务均可
+完成，但阶段探针显示 receiver 在 bucket 0 收到的 `model.embed_tokens.weight`
+仍为全零，而 publisher 发送前数值与 A 完全一致（min=-0.3125,
+max=0.361328125, mean=-9.357804083265364e-05）。因此 V10 暂不通过，不能把
+`send_weights_completed=true` 当作 correctness 证据。已在 packed NCCL producer /
+consumer 中显式把 collective 绑定到对应 buffer stream，并加入 stream-order
+单测；该修复已推送到 `origin/fix/deepseek-v4-partial-reload`（commit
+`c95957f3b8`），但第二次 H200 阶段探针仍复现全零，说明还需继续下沉到
+packed buffer/NCCL wire 指纹检查。新增的真实 packed NCCL UID 回归测试尚未能
+进入 collective：固定环境的 pip NCCL 缺少 `ncclCommSuspend` 符号（H200 job
+`rc=1`），这属于测试装载阻塞，不计入模型结论。
+
+本批用明确的权重值变化证明 reload 后推理实际读取了 B 权重；它补强同 checkpoint
+协议测试，但仍不替代后续 CUDA graph replay 与不同量化格式的 A/B 对照。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的

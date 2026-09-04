@@ -39,6 +39,7 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v3-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 1,581 tensors, 15,802,320,320 bytes, 5 buckets; H200 `rc=0` |
 | `DeepSeek-V4-Flash-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v4-rerun5.json`; `send_weights_completed=true`, epoch/update version 1, 4,711 tensors, 12,844,479,536 bytes, 7 buckets; H200 `rc=0` |
 | `Qwen3.8-27B-FP8-2layer` | day0-kit NCCL | PASS | `day0-qwen38-rerun4.json`; `send_weights_completed=true`, epoch/update version 1, 398 tensors, 7,251,989,472 bytes, 7 buckets; H200 `rc=0` |
+| `Llama-3.2-1B-Instruct` → zero-`model.norm.weight` A/B probe | day0-kit NCCL, packed | **BLOCKED (correctness)** | Publisher bucket 0 source embedding is finite and matches A, but receiver stage probe is all zero after bucket 0 and after finish; both runs report `send_weights_completed=true`, H200 `rc=0`. Explicit buffer-stream binding (`c95957f3b8`) and stream-order unit test pass, but do not yet fix the wire result. |
 
 ## Day-0 rerun requirements
 
@@ -76,6 +77,15 @@ tensor/byte counts, epoch/update version, and `send_weights_completed=true`.
 The fifteen-case audit completed on H200 with `status=ok rc=0`. It also
 checks inference and rendezvous world sizes: 4/5 for the TP=4 Step server and
 1/2 for each single-rank server.
+
+The V10 Llama A/B correctness probe is intentionally excluded from the PASS
+matrix. Its stage JSONs show a source/receiver divergence before finalization:
+`day0-llama32-bf16-packed-stream-fixed-probe-stage-source-bucket-0.json` has
+the original embedding range, while the corresponding `after-bucket-0` and
+`after-finish` files are all zero. A real packed NCCL UID regression test was
+also added, but its H200 run stopped during test-process NCCL loading because
+the fixed environment's `libnccl.so.2` lacks `ncclCommSuspend`; no collective
+correctness claim is made from that failed run.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.
