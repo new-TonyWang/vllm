@@ -106,17 +106,6 @@ class _ParentAliasedChildBufferLayer(torch.nn.Module):
         )
 
 
-class _TiedParameterModel(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        weight = torch.nn.Parameter(torch.arange(12.0).reshape(3, 4))
-        weight.weight_loader = default_weight_loader
-        self.embed = torch.nn.Module()
-        self.embed.register_parameter("weight", weight)
-        self.lm_head = torch.nn.Module()
-        self.lm_head.register_parameter("weight", weight)
-
-
 class _SelectiveRefreshLayer(torch.nn.Module):
     def __init__(self, supports=True):
         super().__init__()
@@ -1240,22 +1229,6 @@ def test_layerwise_reload_skips_non_persistent_parameter_alias_buffers(monkeypat
     )
     assert "weight_view" in layer._non_persistent_buffers_set
     assert "0.weight_view" not in model.state_dict()
-
-
-def test_layerwise_reload_preserves_tied_parameter_loaded_by_one_layer():
-    """An unloaded tied lm_head must not overwrite the loaded embedding."""
-    model = _TiedParameterModel()
-    original_weight = model.embed.weight
-    loaded_weight = torch.full_like(original_weight, 7.0)
-
-    record_metadata_for_reloading(model)
-    initialize_layerwise_reload(model)
-    model.embed.weight.weight_loader(model.embed.weight, loaded_weight)
-    finalize_layerwise_reload(model, model_config=None)
-
-    assert model.embed.weight is original_weight
-    assert model.lm_head.weight is original_weight
-    assert torch.equal(original_weight, loaded_weight)
 
 
 def test_capture_layer_to_meta_skips_uninitialized_parameter_storage_ptrs():

@@ -338,6 +338,21 @@ def test_nccl_receive_weights_without_init_raises():
         engine.receive_weights(update_info)
 
 
+def test_nccl_receive_weights_rejects_packed_wire_mode_mismatch():
+    engine = object.__new__(NCCLWeightTransferEngine)
+    engine.model_update_group = object()
+    engine.packed = False
+    update_info = NCCLWeightTransferUpdateInfo(
+        names=["test.weight"],
+        dtype_names=["bfloat16"],
+        shapes=[[4, 4]],
+        packed=True,
+    )
+
+    with pytest.raises(ValueError, match="packed wire mode mismatch"):
+        engine.receive_weights(update_info)
+
+
 def test_sparse_nccl_receive_weights_without_init_raises():
     """Test that sparse receive raises if init_transfer_engine wasn't called."""
     if torch.accelerator.device_count() < 1:

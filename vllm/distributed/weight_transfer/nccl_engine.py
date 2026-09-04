@@ -244,6 +244,13 @@ class NCCLWeightTransferEngine(
                 "Call init_transfer_engine() first."
             )
 
+        if update_info.packed is not None and update_info.packed != self.packed:
+            raise ValueError(
+                "NCCL packed wire mode mismatch: "
+                f"initialized with packed={self.packed}, "
+                f"but update declared packed={update_info.packed}"
+            )
+
         self._updated_parameter_names.update(update_info.names)
 
         from vllm.model_executor.model_loader.mtp_validation import (
