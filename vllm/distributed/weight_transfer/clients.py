@@ -11,10 +11,12 @@ Imports of `ray` / `requests` are deferred to call time so this module is
 importable without those packages installed.
 """
 
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdatePayload,
     WeightTransferUpdateRequest,
 )
@@ -78,19 +80,28 @@ class HTTPVLLMWeightSyncClient:
     def init_weight_transfer_engine(self, init_info: dict[str, Any]) -> None:
         self._post("init_weight_transfer_engine", {"init_info": init_info})
 
-    def start_weight_update(self) -> None:
-        self._post("start_weight_update")
+    def start_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
+        self._post("start_weight_update", asdict(request) if request else None)
 
     def update_weights(self, update_info: WeightTransferUpdatePayload) -> None:
         self._post(
             "update_weights", {"update_info": _json_safe_update_payload(update_info)}
         )
 
-    def finish_weight_update(self, weight_version: str | None = None) -> None:
-        json = (
-            {"weight_version": weight_version} if weight_version is not None else None
-        )
-        self._post("finish_weight_update", json)
+    def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
+        json = {}
+        if weight_version is not None:
+            json["weight_version"] = weight_version
+        if generation_id is not None:
+            json["generation_id"] = generation_id
+        self._post("finish_weight_update", json or None)
 
 
 class RayVLLMWeightSyncClient:
@@ -109,10 +120,17 @@ class RayVLLMWeightSyncClient:
         request = WeightTransferInitRequest(init_info=init_info)
         ray.get([h.init_weight_transfer_engine.remote(request) for h in self.handles])
 
-    def start_weight_update(self) -> None:
+    def start_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
         import ray
 
-        ray.get([h.start_weight_update.remote() for h in self.handles])
+        refs = (
+            [h.start_weight_update.remote(request) for h in self.handles]
+            if request is not None
+            else [h.start_weight_update.remote() for h in self.handles]
+        )
+        ray.get(refs)
 
     def update_weights(self, update_info: WeightTransferUpdatePayload) -> None:
         import ray
@@ -120,10 +138,23 @@ class RayVLLMWeightSyncClient:
         request = WeightTransferUpdateRequest(update_info=update_info)
         ray.get([h.update_weights.remote(request) for h in self.handles])
 
-    def finish_weight_update(self, weight_version: str | None = None) -> None:
+    def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         import ray
 
-        ray.get([h.finish_weight_update.remote() for h in self.handles])
+        refs = (
+            [
+                h.finish_weight_update.remote(generation_id=generation_id)
+                for h in self.handles
+            ]
+            if generation_id is not None
+            else [h.finish_weight_update.remote() for h in self.handles]
+        )
+        ray.get(refs)
         if weight_version is not None:
             ray.get(
                 [h.update_weight_version.remote(weight_version) for h in self.handles]

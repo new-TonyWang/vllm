@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateRequest,
 )
 from vllm.engine.protocol import EngineClient
@@ -24,6 +25,26 @@ def engine_client(request: Request) -> EngineClient:
 
 
 router = APIRouter()
+
+
+async def _parse_weight_transfer_start(
+    raw_request: Request,
+) -> WeightTransferStartRequest | None:
+    raw_body = await raw_request.body()
+    if not raw_body:
+        return None
+    try:
+        body = json.loads(raw_body)
+    except json.JSONDecodeError as err:
+        raise HTTPException(status_code=400, detail="Invalid JSON format") from err
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    if "generation_id" not in body:
+        return None
+    try:
+        return WeightTransferStartRequest(**body)
+    except (TypeError, ValueError) as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
 
 
 @router.post("/pause")
@@ -174,13 +195,15 @@ async def init_weight_transfer_engine(raw_request: Request):
 
 @router.post("/start_weight_update")
 async def start_weight_update(raw_request: Request):
-    await engine_client(raw_request).start_weight_update()
+    request = await _parse_weight_transfer_start(raw_request)
+    await engine_client(raw_request).start_weight_update(request)
     return JSONResponse(content={"message": "Weight update started"})
 
 
 @router.post("/start_draft_weight_update")
 async def start_draft_weight_update(raw_request: Request):
-    await engine_client(raw_request).start_draft_weight_update()
+    request = await _parse_weight_transfer_start(raw_request)
+    await engine_client(raw_request).start_draft_weight_update(request)
     return JSONResponse(content={"message": "Draft weight update started"})
 
 
@@ -206,8 +229,11 @@ async def update_weights(raw_request: Request):
 async def finish_weight_update(
     raw_request: Request,
     weight_version: Annotated[str | None, Body(embed=True)] = None,
+    generation_id: Annotated[str | None, Body(embed=True)] = None,
 ):
-    await engine_client(raw_request).finish_weight_update(weight_version)
+    await engine_client(raw_request).finish_weight_update(
+        weight_version, generation_id=generation_id
+    )
     return JSONResponse(content={"message": "Weight update finished"})
 
 

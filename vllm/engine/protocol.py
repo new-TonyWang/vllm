@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateRequest,
 )
 from vllm.inputs import EngineInput, PromptType
@@ -273,11 +274,15 @@ class EngineClient(ABC):
         """Initialize weight transfer for RL training."""
         raise NotImplementedError
 
-    async def start_weight_update(self) -> None:
+    async def start_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
         """Start a new weight update."""
         raise NotImplementedError
 
-    async def start_draft_weight_update(self) -> None:
+    async def start_draft_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
         """Start a new weight update targeting the speculative draft model."""
         raise NotImplementedError
 
@@ -285,7 +290,12 @@ class EngineClient(ABC):
         """Batched weight update for RL training."""
         raise NotImplementedError
 
-    async def finish_weight_update(self, weight_version: str | None = None) -> None:
+    async def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         """Finish the weight update and set its version if provided."""
         raise NotImplementedError
 

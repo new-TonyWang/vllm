@@ -339,6 +339,26 @@ class WeightTransferInitRequest:
 
 
 @dataclass
+class WeightTransferStartRequest:
+    """Declare the identity and parameter set of one update transaction."""
+
+    generation_id: str
+    expected_parameter_names: list[str]
+    allow_partial: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.generation_id, str) or not self.generation_id:
+            raise ValueError("`generation_id` must not be empty")
+        if not isinstance(self.expected_parameter_names, list) or any(
+            not isinstance(name, str) for name in self.expected_parameter_names
+        ):
+            raise ValueError("`expected_parameter_names` must be a list of strings")
+        if not isinstance(self.allow_partial, bool):
+            raise ValueError("`allow_partial` must be a boolean")
+        validate_new_parameter_names(self.expected_parameter_names)
+
+
+@dataclass
 class WeightTransferUpdateRequest:
     """API-level weight update request."""
 
@@ -561,11 +581,18 @@ class VLLMWeightSyncClient(Protocol):
 
     def init_weight_transfer_engine(self, init_info: dict[str, Any]) -> None: ...
 
-    def start_weight_update(self) -> None: ...
+    def start_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None: ...
 
     def update_weights(self, update_info: WeightTransferUpdatePayload) -> None: ...
 
-    def finish_weight_update(self, weight_version: str | None = None) -> None: ...
+    def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None: ...
 
 
 class TrainerWeightTransferEngine(ABC, Generic[TTrainerInitInfo]):

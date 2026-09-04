@@ -51,7 +51,9 @@ from vllm.distributed.parallel_state import (
 from vllm.distributed.weight_transfer import (
     WeightTransferEngine,
     WeightTransferEngineFactory,
+    WeightTransferStartRequest,
 )
+from vllm.distributed.weight_transfer.base import validate_new_parameter_names
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.warmup.kernel_warmup import kernel_warmup
@@ -211,6 +213,10 @@ class Worker(WorkerBase):
         self._weight_update_active = False
         self._weight_update_is_draft = False
         self._weight_update_failed = False
+        self._weight_update_generation_id: str | None = None
+        self._weight_update_expected_names: frozenset[str] | None = None
+        self._weight_update_received_names: set[str] = set()
+        self._weight_update_allow_partial = False
 
         # Worker profiler. Enabled and configured through profiler_config.
         # Profiler wrapper is created lazily in profile() when start is called,
@@ -514,6 +520,7 @@ class Worker(WorkerBase):
         with set_current_vllm_config(self.vllm_config):
             self.model_runner.reload_weights(*args, **kwargs)
         self._weight_update_failed = False
+        self._clear_weight_update_manifest()
 
     @torch.inference_mode()
     def determine_available_memory(self) -> int:
@@ -1346,7 +1353,7 @@ class Worker(WorkerBase):
         typed_init_info = self.weight_transfer_engine.parse_init_info(init_info)
         self.weight_transfer_engine.init_transfer_engine(typed_init_info)
 
-    def start_weight_update(self) -> None:
+    def start_weight_update(self, manifest: dict | None = None) -> None:
         """
         Start a new weight update session.
 
@@ -1355,21 +1362,21 @@ class Worker(WorkerBase):
         session is active.
         """
         with set_current_vllm_config(self.vllm_config):
-            self._start_weight_update()
+            self._start_weight_update(manifest=manifest)
 
-    def start_draft_weight_update(self) -> None:
+    def start_draft_weight_update(self, manifest: dict | None = None) -> None:
         """
         Like start_weight_update, but retargets the engine at the speculative
         draft model for this session.
         """
         with set_current_vllm_config(self.vllm_config):
-            self._start_weight_update(is_draft=True)
+            self._start_weight_update(is_draft=True, manifest=manifest)
 
-    def _start_weight_update(self, is_draft: bool = False) -> None:
+    def _start_weight_update(
+        self, is_draft: bool = False, manifest: dict | None = None
+    ) -> None:
         self._check_weight_transfer_engine()
         assert self.weight_transfer_engine is not None
-
-        self._raise_if_weight_update_failed()
 
         if is_draft and not self.weight_transfer_engine.supports_draft_weight_update:
             raise RuntimeError(
@@ -1383,6 +1390,10 @@ class Worker(WorkerBase):
                 "active. Call finish_weight_update first."
             )
 
+        self._raise_if_weight_update_failed()
+        start_request = (
+            WeightTransferStartRequest(**manifest) if manifest is not None else None
+        )
         try:
             if is_draft:
                 self._set_draft_weight_update_target()
@@ -1393,6 +1404,18 @@ class Worker(WorkerBase):
             raise
         self._weight_update_active = True
         self._weight_update_is_draft = is_draft
+        self._weight_update_generation_id = (
+            start_request.generation_id if start_request is not None else None
+        )
+        self._weight_update_expected_names = (
+            frozenset(start_request.expected_parameter_names)
+            if start_request is not None
+            else None
+        )
+        self._weight_update_received_names.clear()
+        self._weight_update_allow_partial = bool(
+            start_request is not None and start_request.allow_partial
+        )
 
     def update_weights(self, update_info: dict | list[dict]) -> None:
         """
@@ -1425,14 +1448,18 @@ class Worker(WorkerBase):
                     ]
                 else:
                     local_update_info = update_info
+                self._validate_weight_update_names(local_update_info)
                 self.weight_transfer_engine.update_weights(local_update_info)
+                self._weight_update_received_names.update(
+                    local_update_info.get("names", ())
+                )
             except BaseException:
                 self._weight_update_failed = True
                 self._weight_update_active = False
                 self.weight_transfer_engine.reset_weight_update_target()
                 raise
 
-    def finish_weight_update(self) -> None:
+    def finish_weight_update(self, generation_id: str | None = None) -> None:
         """Finish the current weight update session."""
         self._check_weight_transfer_engine()
         assert self.weight_transfer_engine is not None
@@ -1444,6 +1471,7 @@ class Worker(WorkerBase):
 
         try:
             with set_current_vllm_config(self.vllm_config):
+                self._validate_weight_update_finish(generation_id)
                 self.weight_transfer_engine.finish_weight_update()
         except BaseException:
             self._weight_update_failed = True
@@ -1455,6 +1483,48 @@ class Worker(WorkerBase):
         # Weight transfer bypasses GPUModelRunner.reload_weights().
         if not self._weight_update_is_draft:
             self.model_runner.reset_lora_state()
+        self._clear_weight_update_manifest()
+
+    def _validate_weight_update_names(self, update_info: dict) -> None:
+        names = update_info.get("names")
+        if names is None:
+            if self._weight_update_expected_names is not None:
+                raise ValueError("Manifest-backed weight updates require `names`.")
+            return
+        validate_new_parameter_names(names, self._weight_update_received_names)
+        if self._weight_update_expected_names is not None:
+            unknown = set(names) - self._weight_update_expected_names
+            if unknown:
+                raise ValueError(
+                    "Weight update contains names absent from the START manifest: "
+                    f"{sorted(unknown)[:20]!r}"
+                )
+
+    def _validate_weight_update_finish(self, generation_id: str | None) -> None:
+        expected_generation = self._weight_update_generation_id
+        if expected_generation is None:
+            return
+        if generation_id != expected_generation:
+            raise ValueError(
+                "Weight update generation mismatch: "
+                f"started {expected_generation!r}, finished {generation_id!r}."
+            )
+        if not self._weight_update_allow_partial:
+            assert self._weight_update_expected_names is not None
+            missing = (
+                self._weight_update_expected_names - self._weight_update_received_names
+            )
+            if missing:
+                raise ValueError(
+                    "Weight update is missing names declared by the START manifest: "
+                    f"{sorted(missing)[:20]!r}"
+                )
+
+    def _clear_weight_update_manifest(self) -> None:
+        self._weight_update_generation_id = None
+        self._weight_update_expected_names = None
+        self._weight_update_received_names.clear()
+        self._weight_update_allow_partial = False
 
     def shutdown(self) -> None:
         gc.unfreeze()

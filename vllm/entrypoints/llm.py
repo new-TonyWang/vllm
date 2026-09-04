@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,7 @@ from vllm.config.model import (
 from vllm.config.quantization import QuantizationConfigArgs
 from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateRequest,
 )
 from vllm.engine.arg_utils import EngineArgs
@@ -869,13 +871,35 @@ class LLM(BeamSearchOfflineMixin, PoolingOfflineMixin, OfflineInferenceMixin):
             "init_weight_transfer_engine", kwargs={"init_info": init_info_dict}
         )
 
-    def start_weight_update(self) -> None:
+    def start_weight_update(
+        self, request: WeightTransferStartRequest | dict | None = None
+    ) -> None:
         """Start a new weight update."""
-        self.llm_engine.collective_rpc("start_weight_update")
+        if isinstance(request, dict):
+            manifest = request
+        else:
+            manifest = asdict(request) if request is not None else None
+        if manifest is None:
+            self.llm_engine.collective_rpc("start_weight_update")
+        else:
+            self.llm_engine.collective_rpc(
+                "start_weight_update", kwargs={"manifest": manifest}
+            )
 
-    def start_draft_weight_update(self) -> None:
+    def start_draft_weight_update(
+        self, request: WeightTransferStartRequest | dict | None = None
+    ) -> None:
         """Start a new weight update targeting the speculative draft model."""
-        self.llm_engine.collective_rpc("start_draft_weight_update")
+        if isinstance(request, dict):
+            manifest = request
+        else:
+            manifest = asdict(request) if request is not None else None
+        if manifest is None:
+            self.llm_engine.collective_rpc("start_draft_weight_update")
+        else:
+            self.llm_engine.collective_rpc(
+                "start_draft_weight_update", kwargs={"manifest": manifest}
+            )
 
     def update_weights(self, request: WeightTransferUpdateRequest | dict) -> None:
         """
@@ -892,9 +916,19 @@ class LLM(BeamSearchOfflineMixin, PoolingOfflineMixin, OfflineInferenceMixin):
             "update_weights", kwargs={"update_info": update_info_dict}
         )
 
-    def finish_weight_update(self, weight_version: str | None = None) -> None:
+    def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         """Finish the weight update and set its version if provided."""
-        self.llm_engine.collective_rpc("finish_weight_update")
+        if generation_id is None:
+            self.llm_engine.collective_rpc("finish_weight_update")
+        else:
+            self.llm_engine.collective_rpc(
+                "finish_weight_update", kwargs={"generation_id": generation_id}
+            )
         if not self.reset_prefix_cache(
             reset_running_requests=True, reset_connector=True
         ):

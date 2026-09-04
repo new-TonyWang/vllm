@@ -12,6 +12,7 @@ from vllm.distributed.weight_transfer.base import (
     VLLMWeightSyncClient,
     WeightSource,
     WeightTransferEngine,
+    WeightTransferStartRequest,
 )
 from vllm.distributed.weight_transfer.clients import (
     HTTPVLLMWeightSyncClient,
@@ -24,6 +25,7 @@ from vllm.distributed.weight_transfer.factory import (
 
 __all__ = [
     "WeightTransferEngine",
+    "WeightTransferStartRequest",
     "WeightTransferEngineFactory",
     "TrainerWeightTransferEngine",
     "WeightTransferTrainerFactory",

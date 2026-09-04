@@ -74,6 +74,10 @@ def _make_worker(engine: _RecordingEngine | None) -> Worker:
     worker._weight_update_active = False
     worker._weight_update_is_draft = False
     worker._weight_update_failed = False
+    worker._weight_update_generation_id = None
+    worker._weight_update_expected_names = None
+    worker._weight_update_received_names = set()
+    worker._weight_update_allow_partial = False
     worker.model_runner = _RecordingModelRunner()
     return worker
 
@@ -230,6 +234,97 @@ def test_finish_failure_disables_serving_and_ends_session():
     assert worker.model_runner.reset_lora_calls == 0
     with pytest.raises(RuntimeError, match="mixed generations"):
         Worker.check_health(worker)
+
+
+def test_manifest_rejects_missing_name_at_finish():
+    worker = _make_worker(_RecordingEngine())
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": ["a", "b"],
+        },
+    )
+    Worker.update_weights(worker, {"names": ["a"]})
+
+    with pytest.raises(ValueError, match="missing names"):
+        Worker.finish_weight_update(worker, generation_id="generation-1")
+
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
+
+
+def test_manifest_rejects_unknown_name_before_engine_update():
+    engine = _RecordingEngine()
+    worker = _make_worker(engine)
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": ["expected"],
+        },
+    )
+
+    with pytest.raises(ValueError, match="absent from the START manifest"):
+        Worker.update_weights(worker, {"names": ["unknown"]})
+
+    assert engine.update_calls == []
+
+
+def test_manifest_rejects_generation_mismatch():
+    worker = _make_worker(_RecordingEngine())
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": [],
+        },
+    )
+
+    with pytest.raises(ValueError, match="generation mismatch"):
+        Worker.finish_weight_update(worker, generation_id="generation-2")
+
+
+def test_manifest_rejects_missing_finish_generation():
+    worker = _make_worker(_RecordingEngine())
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": [],
+        },
+    )
+
+    with pytest.raises(ValueError, match="generation mismatch"):
+        Worker.finish_weight_update(worker)
+
+    with pytest.raises(RuntimeError, match="mixed generations"):
+        Worker.check_health(worker)
+
+
+def test_legacy_start_does_not_require_finish_generation():
+    worker = _make_worker(_RecordingEngine())
+
+    Worker.start_weight_update(worker)
+    Worker.finish_weight_update(worker)
+
+    Worker.check_health(worker)
+
+
+def test_manifest_allows_declared_partial_update():
+    worker = _make_worker(_RecordingEngine())
+    Worker.start_weight_update(
+        worker,
+        manifest={
+            "generation_id": "generation-1",
+            "expected_parameter_names": ["a", "b"],
+            "allow_partial": True,
+        },
+    )
+    Worker.update_weights(worker, {"names": ["a"]})
+    Worker.finish_weight_update(worker, generation_id="generation-1")
+
+    Worker.check_health(worker)
 
 
 def test_missing_engine_raises():

@@ -35,6 +35,7 @@ from vllm.distributed.weight_transfer.base import (
     TrainerInitInfo,
     WeightTransferEngine,
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateRequest,
     layerwise_groups,
     validate_new_parameter_names,
@@ -120,6 +121,38 @@ def create_mock_vllm_config(
     vllm_config.parallel_config = create_mock_parallel_config(rank, world_size, dp_rank)
     vllm_config.model_config = MagicMock()
     return vllm_config
+
+
+def test_weight_transfer_start_request_rejects_duplicate_names():
+    with pytest.raises(ValueError, match="already received"):
+        WeightTransferStartRequest(
+            generation_id="generation-1",
+            expected_parameter_names=["w", "w"],
+        )
+
+
+def test_weight_transfer_start_request_rejects_empty_generation():
+    with pytest.raises(ValueError, match="must not be empty"):
+        WeightTransferStartRequest(generation_id="", expected_parameter_names=["w"])
+
+
+@pytest.mark.parametrize(
+    ("expected_parameter_names", "allow_partial", "message"),
+    [
+        ("weight", False, "list of strings"),
+        ([1], False, "list of strings"),
+        (["w"], 1, "must be a boolean"),
+    ],
+)
+def test_weight_transfer_start_request_rejects_invalid_field_types(
+    expected_parameter_names, allow_partial, message
+):
+    with pytest.raises(ValueError, match=message):
+        WeightTransferStartRequest(
+            generation_id="generation-1",
+            expected_parameter_names=expected_parameter_names,
+            allow_partial=allow_partial,
+        )
 
 
 # --- Unit Tests: NCCLWeightTransferUpdateInfo Validation ---
@@ -1303,6 +1336,12 @@ class TestTrainerClients:
         assert isinstance(init_req, WeightTransferInitRequest)
         assert init_req.init_info == {"master_addr": "x"}
 
+        start_request = WeightTransferStartRequest(
+            generation_id="generation-1", expected_parameter_names=["w"]
+        )
+        client.start_weight_update(start_request)
+        handle.start_weight_update.remote.assert_called_once_with(start_request)
+
         client.update_weights({"names": ["w"]})
         (update_req,), _ = handle.update_weights.remote.call_args
         assert isinstance(update_req, WeightTransferUpdateRequest)
@@ -1346,12 +1385,27 @@ class TestTrainerClients:
 
         monkeypatch.setattr(HTTPVLLMWeightSyncClient, "_post", fake_post)
         client = HTTPVLLMWeightSyncClient("http://localhost:8000")
+        client.start_weight_update(
+            WeightTransferStartRequest(
+                generation_id="generation-1", expected_parameter_names=["w"]
+            )
+        )
+        assert captured == {
+            "json": {
+                "generation_id": "generation-1",
+                "expected_parameter_names": ["w"],
+                "allow_partial": False,
+            }
+        }
         update_info = {"names": ["w"], "dtype_names": ["float32"], "shapes": [[4]]}
         client.update_weights(update_info)
         assert captured["json"]["update_info"] == update_info
 
-        client.finish_weight_update("step-42")
-        assert captured["json"] == {"weight_version": "step-42"}
+        client.finish_weight_update("step-42", generation_id="generation-1")
+        assert captured["json"] == {
+            "weight_version": "step-42",
+            "generation_id": "generation-1",
+        }
 
 
 class TestModuleSource:

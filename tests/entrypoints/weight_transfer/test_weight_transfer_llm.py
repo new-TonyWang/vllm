@@ -20,6 +20,7 @@ from vllm.distributed.weight_transfer.base import (
     WeightTransferEngine,
     WeightTransferInitInfo,
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateInfo,
     WeightTransferUpdateRequest,
 )
@@ -101,6 +102,68 @@ def mock_create_engine(config, vllm_config, device, model):
 
 
 # --- Tests ---
+
+
+def test_start_weight_update_forwards_manifest():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+    request = WeightTransferStartRequest(
+        generation_id="generation-1", expected_parameter_names=["w"]
+    )
+
+    llm.start_weight_update(request)
+
+    llm.llm_engine.collective_rpc.assert_called_once_with(
+        "start_weight_update",
+        kwargs={
+            "manifest": {
+                "generation_id": "generation-1",
+                "expected_parameter_names": ["w"],
+                "allow_partial": False,
+            }
+        },
+    )
+
+
+def test_start_weight_update_preserves_legacy_rpc_call():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+
+    llm.start_weight_update()
+
+    llm.llm_engine.collective_rpc.assert_called_once_with("start_weight_update")
+
+
+@pytest.mark.asyncio
+async def test_async_start_weight_update_forwards_manifest():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    llm.collective_rpc = AsyncMock()
+    request = WeightTransferStartRequest(
+        generation_id="generation-1", expected_parameter_names=["w"]
+    )
+
+    await llm.start_weight_update(request)
+
+    llm.collective_rpc.assert_awaited_once_with(
+        "start_weight_update",
+        kwargs={
+            "manifest": {
+                "generation_id": "generation-1",
+                "expected_parameter_names": ["w"],
+                "allow_partial": False,
+            }
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_start_weight_update_preserves_legacy_rpc_call():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    llm.collective_rpc = AsyncMock()
+
+    await llm.start_weight_update()
+
+    llm.collective_rpc.assert_awaited_once_with("start_weight_update")
 
 
 def test_finish_weight_update_invalidates_caches_before_version():

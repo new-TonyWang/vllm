@@ -7,6 +7,7 @@ import time
 import warnings
 from collections.abc import AsyncGenerator, Iterable, Mapping
 from copy import copy
+from dataclasses import asdict
 from typing import Any, Optional
 
 import vllm.envs as envs
@@ -14,6 +15,7 @@ from vllm import TokensPrompt
 from vllm.config import VllmConfig
 from vllm.distributed.weight_transfer.base import (
     WeightTransferInitRequest,
+    WeightTransferStartRequest,
     WeightTransferUpdateRequest,
 )
 from vllm.engine.arg_utils import AsyncEngineArgs
@@ -1200,13 +1202,27 @@ class AsyncLLM(EngineClient):
             "init_weight_transfer_engine", kwargs={"init_info": request.init_info}
         )
 
-    async def start_weight_update(self) -> None:
+    async def start_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
         """Start a new weight update."""
-        await self.collective_rpc("start_weight_update")
+        if request is None:
+            await self.collective_rpc("start_weight_update")
+        else:
+            await self.collective_rpc(
+                "start_weight_update", kwargs={"manifest": asdict(request)}
+            )
 
-    async def start_draft_weight_update(self) -> None:
+    async def start_draft_weight_update(
+        self, request: WeightTransferStartRequest | None = None
+    ) -> None:
         """Start a new weight update targeting the speculative draft model."""
-        await self.collective_rpc("start_draft_weight_update")
+        if request is None:
+            await self.collective_rpc("start_draft_weight_update")
+        else:
+            await self.collective_rpc(
+                "start_draft_weight_update", kwargs={"manifest": asdict(request)}
+            )
 
     async def update_weights(self, request: WeightTransferUpdateRequest) -> None:
         """
@@ -1219,9 +1235,19 @@ class AsyncLLM(EngineClient):
             "update_weights", kwargs={"update_info": request.update_info}
         )
 
-    async def finish_weight_update(self, weight_version: str | None = None) -> None:
+    async def finish_weight_update(
+        self,
+        weight_version: str | None = None,
+        *,
+        generation_id: str | None = None,
+    ) -> None:
         """Finish the weight update and set its version if provided."""
-        await self.collective_rpc("finish_weight_update")
+        if generation_id is None:
+            await self.collective_rpc("finish_weight_update")
+        else:
+            await self.collective_rpc(
+                "finish_weight_update", kwargs={"generation_id": generation_id}
+            )
         if not await self.reset_prefix_cache(
             reset_running_requests=True, reset_connector=True
         ):
