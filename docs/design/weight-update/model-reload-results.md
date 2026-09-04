@@ -31,7 +31,9 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `Step-3.7-Flash` | day0-kit NCCL, TP=4 | PASS | `day0-step37-full-day0-rerun.json`; inference/rendezvous world size 4/5, `send_weights_completed=true`, epoch/update version 1, 1,471 tensors, 402,730,656,512 bytes, 273 buckets; H200 detached job `rc=0` |
 | `Kimi-K2-Instruct-0905-2layer` | day0-kit NCCL | PASS | `day0-kimi-k2-2layer-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 2,351 tensors, 22,261,573,056 bytes, 5 buckets; H200 detached job `rc=0` |
 | `Llama-3.2-1B-Instruct` | day0-kit NCCL | PASS | `day0-llama32-1b-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 146 tensors, 2,471,628,800 bytes, 5 buckets, post-finish health 200; H200 detached job `rc=0` |
+| `Llama-3.2-1B-Instruct` online block FP8 | day0-kit NCCL | PASS | `day0-llama32-online-block-fp8-day0.json`; `Fp8PerBlockOnlineLinearMethod` with DeepGEMM, `send_weights_completed=true`, epoch/update version 1, 146 tensors, 2,471,628,800 bytes, 5 buckets, post-finish health 200; H200 detached job `rc=0` |
 | `Mixtral-8x7B-Instruct-v0.1-2layer` | day0-kit NCCL | PASS | `day0-mixtral-2layer-day0-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 65 tensors, 6,329,376,768 bytes, 4 buckets, post-finish health 200; H200 detached job `rc=0` |
+| `Mixtral-8x7B-Instruct-v0.1-2layer` online per-tensor FP8 | day0-kit NCCL | PASS | `day0-mixtral-online-tensor-fp8-day0.json`; `Fp8PerTensorOnlineLinearMethod` with CUTLASS and TRITON FP8 MoE, `send_weights_completed=true`, epoch/update version 1, 65 tensors, 6,329,376,768 bytes, 4 buckets, post-finish health 200; H200 detached job `rc=0` |
 | `Qwen2.5-7B-Instruct-GPTQ-Int4` | day0-kit NCCL, Marlin | PASS | `day0-qwen25-gptq-marlin-day0.json`; `MarlinLinearKernel`, `send_weights_completed=true`, epoch/update version 1, 927 tensors, 5,575,277,568 bytes, 9 buckets, post-finish health 200; H200 detached job `rc=0` |
 | `DeepSeek-V3-FP8-2layer` | direct vLLM RPC reload | PASS (non-day0) | H200 `rc=0`; reload loaded the checkpoint and second generation completed |
 | `DeepSeek-V3-FP8-2layer` | day0-kit NCCL | PASS | `day0-deepseek-v3-rerun.json`; `send_weights_completed=true`, epoch/update version 1, 1,581 tensors, 15,802,320,320 bytes, 5 buckets; H200 `rc=0` |
@@ -71,7 +73,7 @@ reports `send_weights_completed=true`, and the completed H200 workload returns
 PASS row's JSON and matching server log. It checks the NCCL backend and trainer
 transport, start/update/finish ordering, bucket indices and aggregate
 tensor/byte counts, epoch/update version, and `send_weights_completed=true`.
-The thirteen-checkpoint audit completed on H200 with `status=ok rc=0`. It also
+The fifteen-case audit completed on H200 with `status=ok rc=0`. It also
 checks inference and rendezvous world sizes: 4/5 for the TP=4 Step server and
 1/2 for each single-rank server.
 
@@ -101,6 +103,15 @@ not counted as Marlin evidence. The accepted run set
 `DAY0_LINEAR_BACKEND=marlin`; its server log records
 `Using MarlinLinearKernel for AutoGPTQLinearMethod`, followed by nine successful
 update buckets, finish, and post-finish health 200.
+
+The online FP8 cases reuse BF16 checkpoints rather than serialized FP8 weights.
+The Llama run selected `DeepGemmFp8BlockScaledMMKernel` for
+`Fp8PerBlockOnlineLinearMethod`, covering 128x128 online block quantization.
+The Mixtral run selected `CutlassFP8ScaledMMLinearKernel` for
+`Fp8PerTensorOnlineLinearMethod` and the TRITON FP8 MoE backend, covering fused
+w1/w3 expert quantization. Both reloads completed through the current layerwise
+restore, requantize, and stable-runtime-storage copy path. These same-checkpoint
+protocol checks do not replace the later A/B value and CUDA graph replay tests.
 
 ## Background-job behavior
 

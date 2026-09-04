@@ -124,6 +124,32 @@ checkpoint 的容量测试。
 该 checkpoint 是 4-bit、group size 128、symmetric、`desc_act=false`，满足当前
 AutoGPTQ Marlin 支持条件，用于补齐最终验收矩阵的 Marlin/INT4 路径。
 
+## 验证批次 V8：online block FP8 dense checkpoint
+
+- [x] 使用完整 `Llama-3.2-1B-Instruct` BF16 checkpoint 和
+  `--quantization fp8_per_block`，确认选择在线 128x128 block FP8 linear 路径。
+- [x] 使用 TP=1 在 GPU 0 启动 server，publisher 独占 GPU 1；完成 day0 NCCL
+  reload，并核对事务、bucket 汇总、post-finish health 与 H200 `rc=0`。
+- [x] 将结果加入统一 verifier，并要求 server log 中存在
+  `Fp8PerBlockOnlineLinearMethod` 对应 kernel 选择证据。
+
+本批验证 BF16 checkpoint 在 reload 时恢复 checkpoint layout、重新执行在线 block
+量化，并将结果复制回已有 runtime storage；不以 serialized block-FP8 checkpoint
+替代在线量化路径。
+
+## 验证批次 V9：online fused per-tensor FP8 MoE checkpoint
+
+- [x] 使用 `Mixtral-8x7B-Instruct-v0.1-2layer` BF16 checkpoint 和
+  `--quantization fp8_per_tensor`，确认 dense linear 与 fused MoE 均进入在线
+  per-tensor FP8 路径。
+- [x] 使用 TP=1 在 GPU 0 启动 server，publisher 独占 GPU 1；完成 day0 NCCL
+  reload，并核对事务、bucket 汇总、post-finish health 与 H200 `rc=0`。
+- [x] 将结果加入统一 verifier，并要求 server log 中存在在线 per-tensor linear 和
+  MoE backend 的选择证据。
+
+本批专门覆盖 fused w1/w3 依赖同时到齐后重新量化的 MoE 路径；两层 checkpoint
+保留每层全部 8 个 expert，可验证融合参数的加载与完成 accounting。
+
 ## 批次 0：契约和调度骨架
 
 - [x] 在 `QuantizeMethodBase` 增加默认的
