@@ -254,8 +254,13 @@ Qwen2.5 重验和 Llama A/B 重验覆盖。
     - [x] dense NCCL/IPC 拒绝单 bucket 内及跨 bucket 的重复 tensor name。
     - [x] transaction active 或 start/update/finish 任一阶段失败后禁止 serving；只有
       finish 成功或完整 disk reload 恢复后才重新开放。
-    - [ ] START manifest 声明 generation id、完整 tensor 集合和 sparse policy，并在
-      finish 拒绝缺失 tensor、未知 tensor、generation 不一致和 receiver rank 分歧。
+    - [x] START manifest 声明 generation id、完整 tensor 集合和 sparse policy；
+      legacy 空 START 继续兼容。
+    - [x] UPDATE 在接收 NCCL payload 前拒绝未声明及重复 tensor name；FINISH 拒绝
+      缺失 tensor 以及缺失或不一致的 generation id。
+    - [x] 只有 manifest 显式设置 `allow_partial=true` 时才允许集合不完整。
+    - [ ] 多 receiver rank 必须对 generation、received-name accounting 和最终提交结果
+      达成一致；注入单 rank 失败并验证其余 rank 不得提交。
 - [ ] 为同步 `LLM`、`AsyncLLM` 和 draft-model update 覆盖相同的提交与缓存失效
   契约，并补充失败注入单元测试。
 
@@ -281,8 +286,21 @@ publisher 丢 bucket 后没有 receiver exception 的情况。dense NCCL/IPC 的
 H200 返回 `status=ok rc=0`；真实服务只调用 START 后的 completion 返回 HTTP 500，
 `v12-interruption-result.json` 记录 `serving_blocked=true`。完整正常 reload 回归仍通过
 146 tensors / 2,471,628,800 bytes / 5 buckets 和统一 verifier，H200 job
-`eee342b8d025` 返回 `rc=0`。缺失 tensor 和多 rank 一致性仍需 START manifest，未在
-本阶段宣称完成。
+`eee342b8d025` 返回 `rc=0`。当时缺失 tensor 和多 rank 一致性仍需 START manifest，
+未在该阶段宣称完成；下述 follow-up 已关闭单 receiver 的缺失 tensor 项。
+
+START manifest 阶段证据（2026-09-04）：commit `ff1a001db8` 将可选 manifest 接入
+HTTP、Ray、同步 `LLM`、`AsyncLLM` 和 worker，保留 legacy 无参数调用；day0-kit
+commit `c0edf22` 为每轮完整 checkpoint update 生成唯一 generation，并在 START、
+FINISH 和结果 JSON 中贯穿同一值。固定环境 28 个聚焦测试通过，day0 verifier 的
+3 个 generation evidence 测试亦通过。真实 H200 missing-name 与 unknown-name 注入均
+使操作请求和后续 completion 返回 HTTP 500，结果分别写入
+`v12-manifest-missing-result.json` 和 `v12-manifest-unknown-result.json`，两次任务均为
+`status=ok rc=0`。正常 Llama zero-`v_proj` A/B 回归传输 146 tensors、
+2,471,628,800 bytes、5 buckets，generation
+`day0-b882e9e2184243b29671d9f11f3a9315` 通过增强后的统一 verifier；cold-A 与
+warm-B 不同，warm-B 与 cold-B 完全一致，H200 返回 `status=ok rc=0`。多 receiver
+rank 分歧仍未验证，因此父项保持未完成。
 
 ## 验证批次 V13：storage ownership 与 backend 收口
 

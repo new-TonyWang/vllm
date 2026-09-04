@@ -17,8 +17,9 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
   `38cf4a5`; packed stream ordering `c95957f3b8`; old-NCCL compatibility and
   disabled-communicator fail-closed `59bdf7cf92`; post-update cache invalidation
   `730eab3782`; failed/active transaction serving guard `142e770e57` and
-  `50d1fc8667`
-- day0-kit dtype fix: `c446b55`; configurable prefix-cache oracle `152c2c0`
+  `50d1fc8667`; START manifest validation `ff1a001db8`
+- day0-kit dtype fix: `c446b55`; configurable prefix-cache oracle `152c2c0`;
+  START/FINISH generation manifest `c0edf22`; generation verifier `a5d98d7`
 - NCCL settings: `backend=nccl`, `NCCL_SOCKET_IFNAME=lo`
 
 ## Results
@@ -45,6 +46,7 @@ server started with `--weight-transfer-config '{"backend":"nccl"}'`.
 | `Qwen3.8-27B-FP8-2layer` | day0-kit NCCL | **PASS** | `day0-qwen38-real-nccl-rerun.json`; DeepGEMM FP8 kernel selected; NCCL 2.28.9 rank 0 / GPU 1 / nranks 2 Init COMPLETE; 398 tensors, 7,251,989,472 bytes, 7 buckets; verifier PASS; H200 job `891707d27c82`, `rc=0` |
 | `Llama-3.2-1B-Instruct` → zero-`model.norm.weight` A/B | day0-kit NCCL, packed | **PASS** | `day0-llama32-bf16-nccl-enabled-ab-ab-compare.json`; all five repeat/difference/cold-warm checks pass. `day0-llama32-bf16-nccl-enabled-ab-update.json`: 146 tensors, 2,471,628,800 bytes, epoch/version 1; NCCL 2.28.9; H200 job `93794cf12aff`, `rc=0` |
 | `Llama-3.2-1B-Instruct` → zero-layer-0-`v_proj` A/B with prefix cache | day0-kit NCCL, packed | **PASS** | `day0-v12-prefix-cache-fixed-ab-compare.json`; no manual reset endpoint; cold-A differs from warm-B and warm-B exactly equals cold-B for token IDs and completion logprobs. 146 tensors, 2,471,628,800 bytes, 5 buckets; unified verifier PASS; H200 job `ad8abb41a011`, `rc=0` |
+| `Llama-3.2-1B-Instruct` → zero-layer-0-`v_proj` A/B with START manifest | day0-kit NCCL, packed | **PASS** | `day0-v12-start-manifest-update.json`; generation `day0-b882e9e2184243b29671d9f11f3a9315` is consistent across START/FINISH evidence; 146 tensors, 2,471,628,800 bytes, 5 buckets; cold-A differs from warm-B and warm-B equals cold-B; enhanced unified verifier PASS; H200 `status=ok rc=0` |
 
 ## Day-0 rerun requirements
 
@@ -121,8 +123,27 @@ also reject duplicate names within one bucket or repeated across buckets before
 receiving their payload. Eighteen focused tests pass on H200. The normal path
 was rechecked by job `eee342b8d025`: 146 tensors, 2,471,628,800 bytes, five
 buckets, exact A/B comparison and the unified verifier all pass with `rc=0`.
-Missing-name and cross-rank completeness still require a START manifest and are
-not counted as complete.
+At that stage, missing-name and cross-rank completeness still required a START
+manifest and were not counted as complete; the manifest follow-up below closes
+the single-receiver missing-name case.
+
+Commit `ff1a001db8` adds an optional, backward-compatible START manifest with a
+generation id, the expected parameter-name set, and an explicit partial-update
+policy. Unknown and duplicate names are rejected before the receiver enters the
+NCCL payload path; FINISH rejects missing names and generation mismatch. Two real
+H200 service probes confirm fail-closed behavior: `v12-manifest-missing-result.json`
+and `v12-manifest-unknown-result.json` both record HTTP 500 for the faulting
+operation and the following completion, with `serving_blocked=true`; both jobs
+returned `[h200_ncu] status=ok rc=0`.
+
+The normal manifest-backed Llama A/B run generated
+`day0-b882e9e2184243b29671d9f11f3a9315`, sent 146 tensors / 2,471,628,800 bytes
+in five buckets, and completed START and FINISH with that generation. The fixed
+token comparison remains PASS: cold-A differs from warm-B and warm-B exactly
+matches cold-B. The day0 verifier at `a5d98d7` additionally requires consistent
+generation evidence and accepted this run; its three focused tests and the H200
+workload both returned success. Multi-receiver rank disagreement has not yet
+been injected and remains open.
 
 The reduced Kimi checkpoint keeps global tensors and layers 0–1 from the full
 checkpoint index. Its three shard files are hard links to the original files.
