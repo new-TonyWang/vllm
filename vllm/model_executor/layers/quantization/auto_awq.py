@@ -917,11 +917,17 @@ class AutoAWQLinearMethod(BaseAWQLinearMethod):
     """
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        layer.qweight = torch.nn.Parameter(layer.qweight.data, requires_grad=False)
-        layer.qzeros = torch.nn.Parameter(layer.qzeros.data, requires_grad=False)
-        layer.scales = torch.nn.Parameter(layer.scales.data, requires_grad=False)
+        # Keep PackedvLLMParameter instances intact. Their specialized loaders
+        # are required for direct per-parameter reloads after cold start.
+        return
 
     def supports_selective_reload(self) -> bool:
+        return True
+
+    def reload_parameter(self, layer, parameter_name, target, bound_args, loader):
+        del layer, parameter_name
+        bound_args.arguments["param"] = target
+        loader(*bound_args.args, **bound_args.kwargs)
         return True
 
     def refresh_derived_state(

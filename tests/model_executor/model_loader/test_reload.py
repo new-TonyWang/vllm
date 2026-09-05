@@ -238,6 +238,10 @@ def test_awq_gemm_repeated_reload_without_pwal(monkeypatch):
                 param.shape, generation, dtype=param.dtype, device="cpu"
             )
             param.weight_loader(param, value)
+            info = reload_layerwise.get_layerwise_info(layer)
+            assert name in info.eager_parameter_names
+            assert not info.loaded_weights
+            assert torch.equal(original[name], value)
         finalize_layerwise_reload(layer, model_config=None)
         method.refresh_derived_state(layer)
         method.refresh_derived_state(layer)

@@ -190,6 +190,16 @@ def make_online_process_loader(layer: torch.nn.Module, param_name: str) -> Calla
         bound_args = loader_signature.bind(*args, **kwargs)
         bound_args.apply_defaults()
 
+        quant_method = getattr(layer, "quant_method", None)
+        target = info.kernel_tensors[0].get(param_name) if info.kernel_tensors else None
+        reload_parameter = getattr(quant_method, "reload_parameter", None)
+        if target is not None and callable(reload_parameter):
+            num_loaded, ret = get_numel_loaded(original_loader, bound_args)
+            if reload_parameter(layer, param_name, target, bound_args, original_loader):
+                info.load_numel += num_loaded
+                info.eager_parameter_names.add(param_name)
+                return ret
+
         # Buffer loaded weights, track loading progress
         info.loaded_weights.append((param_name, bound_args))
         num_loaded, ret = get_numel_loaded(original_loader, bound_args)
@@ -224,7 +234,8 @@ def make_online_process_loader(layer: torch.nn.Module, param_name: str) -> Calla
 
         # Process and copy when all weights are loaded
         if info.load_numel >= info.load_numel_total:  # type: ignore[operator]
-            _layerwise_process(layer, info)
+            if info.loaded_weights:
+                _layerwise_process(layer, info)
             LOADING_LAYERS.discard(layer)
 
         return ret
@@ -283,6 +294,8 @@ def finalize_layerwise_processing(
         # if the created weight has extra padding elements which are not loaded
         # Having too many of these delayed layers can lead to excess memory usage
         # see Limitations(4)
+        elif info.eager_parameter_names and not info.loaded_weights:
+            _place_kernel_tensors(layer, info)
         elif info.load_numel > 0 and info.load_numel < info.load_numel_total:  # type: ignore[operator]
             logger.debug("%s: Delayed processing", layer.__class__.__name__)
             _layerwise_process(layer, info)
