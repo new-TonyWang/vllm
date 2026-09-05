@@ -134,6 +134,38 @@ def test_start_weight_update_preserves_legacy_rpc_call():
     llm.llm_engine.collective_rpc.assert_called_once_with("start_weight_update")
 
 
+def test_start_draft_weight_update_forwards_manifest():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+    request = WeightTransferStartRequest(
+        generation_id="draft-generation-1", expected_parameter_names=["draft.w"]
+    )
+
+    llm.start_draft_weight_update(request)
+
+    llm.llm_engine.collective_rpc.assert_called_once_with(
+        "start_draft_weight_update",
+        kwargs={
+            "manifest": {
+                "generation_id": "draft-generation-1",
+                "expected_parameter_names": ["draft.w"],
+                "allow_partial": False,
+            }
+        },
+    )
+
+
+def test_start_draft_weight_update_preserves_legacy_rpc_call():
+    llm = LLM.__new__(LLM)
+    llm.llm_engine = MagicMock()
+
+    llm.start_draft_weight_update()
+
+    llm.llm_engine.collective_rpc.assert_called_once_with(
+        "start_draft_weight_update"
+    )
+
+
 @pytest.mark.asyncio
 async def test_async_start_weight_update_forwards_manifest():
     llm = AsyncLLM.__new__(AsyncLLM)
@@ -164,6 +196,38 @@ async def test_async_start_weight_update_preserves_legacy_rpc_call():
     await llm.start_weight_update()
 
     llm.collective_rpc.assert_awaited_once_with("start_weight_update")
+
+
+@pytest.mark.asyncio
+async def test_async_start_draft_weight_update_forwards_manifest():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    llm.collective_rpc = AsyncMock()
+    request = WeightTransferStartRequest(
+        generation_id="draft-generation-1", expected_parameter_names=["draft.w"]
+    )
+
+    await llm.start_draft_weight_update(request)
+
+    llm.collective_rpc.assert_awaited_once_with(
+        "start_draft_weight_update",
+        kwargs={
+            "manifest": {
+                "generation_id": "draft-generation-1",
+                "expected_parameter_names": ["draft.w"],
+                "allow_partial": False,
+            }
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_start_draft_weight_update_preserves_legacy_rpc_call():
+    llm = AsyncLLM.__new__(AsyncLLM)
+    llm.collective_rpc = AsyncMock()
+
+    await llm.start_draft_weight_update()
+
+    llm.collective_rpc.assert_awaited_once_with("start_draft_weight_update")
 
 
 def test_finish_weight_update_invalidates_caches_before_version():
