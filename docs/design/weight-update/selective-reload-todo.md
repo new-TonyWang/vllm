@@ -431,10 +431,15 @@ kernel 编译次数均验证。
 这一批不是简单的 derived state，必须先保存 checkpoint/runtime 两种布局的
 storage 语义，再实现 refresh。
 
+- [x] AWQ 原生 GEMM 的 refresh 不再调用 PWAL：该后端直接消费 checkpoint
+  布局，无需重新注册 Parameter。固定 vLLM 环境的行为测试在冷启动后禁用
+  PWAL，连续两次 reload 检查 qweight/qzeros/scales 值、对象和地址稳定。
+- [ ] AWQ 分类①接通逐参数 eager copy，避免沿用整层缓冲；Marlin repack
+  独立实现并验证。上述单测不等价于完整 AWQ day0 验收。
 - [ ] FP8 per-tensor transpose/requant：`fp8.py`、scaled-mm FP8 实现需要先把
   checkpoint-layout 参数暂存，再由 `refresh_derived_state` 重建 runtime layout；
-  当前已完成实验性 opt-in 和 Qwen3-30B-FP8 H200 验证，仍需补齐 Marlin/online
-  分支的 storage identity 与 A/B 数值验收。
+  当前实验性 opt-in 的 refresh 仍调用 PWAL，不满足目标契约。
+  Qwen3-30B-FP8 是 block-FP8，不能证明 per-tensor 覆盖；需要重新实现并验证。
 - [x] DeepGEMM、FlashInfer、AITER 的 block-scale/layout shuffle 已审计；
   依赖 runtime/layout 生命周期的路径保留 fallback。
 - [x] Marlin、Machete、WNA16、MXFP4/MXFP8/NVFP4 repack 已审计；
@@ -444,15 +449,14 @@ storage 语义，再实现 refresh。
 - [x] 在通用 layerwise 初始化中接入
   `restore_weights_before_loading()`；具体 backend 仅在能记录并复用原始
   shape/stride/layout 时才允许后续 opt-in。
-- [x] 约束已固化：冷启动允许 replace，refresh 只能写入既有 storage；未能
-  提取纯变换函数的 backend 保持 fallback。layerwise reload 对已 opt-in 方法
-  先在 staging layer 调用 refresh，再 copy 回冷启动保存的 storage，reload 阶段
-  不调用 PWAL。
+- [ ] 落实约束：冷启动允许 replace，refresh 只能写入既有 runtime storage。
+  当前实验包装器仍调用 PWAL；需拆出纯转换并接通 per-param copy/staging，
+  使用冷启动后将 PWAL 替换为抛异常的测试证明 reload 不再调用它。
 - [x] 已明确 shape-changing 与 data_ptr 不可稳定的 backend，继续 fallback。
 
 审计备注：compressed-tensors FP8 路径仍显式 fallback；它包含跨 logical shard
 requant、transpose 和 Parameter 重注册。原生 `Fp8LinearMethod` per-tensor 路径
-已进入实验性 staging/refresh 路径，但尚未宣称所有 backend 均安全。通用
+只有实验性包装器，尚未通过无 PWAL 的 per-tensor reload 验收。通用
 `restore_weights_before_loading()` 调用点现已接入 layerwise 初始化，但这些
 后端仍没有可复用的原始 storage/布局协议，暂不能证明 storage identity。
 CutlassBatchedExpertsFp8 无额外后处理状态，BatchedDeepGemmExperts 依赖

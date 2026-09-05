@@ -929,8 +929,8 @@ class AutoAWQLinearMethod(BaseAWQLinearMethod):
         layer: torch.nn.Module,
         updated_parameter_names: frozenset[str] | None = None,
     ) -> None:
-        del updated_parameter_names
-        self.process_weights_after_loading(layer)
+        """AWQ GEMM consumes checkpoint layout directly; no derived state."""
+        return
 
     def apply(
         self,

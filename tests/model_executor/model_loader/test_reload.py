@@ -21,11 +21,7 @@ from vllm.model_executor.layers.attention.mla_attention import MLAAttention
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.linear import QKVParallelLinear
 from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
-from vllm.model_executor.layers.quantization.auto_awq import (
-    AutoAWQLinearMethod,
-    AutoAWQMarlinLinearMethod,
-)
-from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
+from vllm.model_executor.layers.quantization.auto_awq import AutoAWQLinearMethod
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 import vllm.models.deepseek_v4.nvidia.model as deepseek_v4_nvidia
 from vllm.models.deepseek_v4.nvidia.mtp import DeepSeekV4MTP as DeepseekV4NvidiaMTP
@@ -202,14 +198,55 @@ def test_layerwise_reload_restores_before_loading_and_refreshes_after():
     assert torch.equal(layer.weight, torch.full((2,), 3.0))
 
 
-@pytest.mark.parametrize(
-    "method_cls",
-    [Fp8LinearMethod, AutoAWQLinearMethod, AutoAWQMarlinLinearMethod],
-)
-def test_block_and_per_tensor_quant_methods_opt_into_refresh(method_cls):
-    """Quantized reload uses staged params and refresh, not PWAL."""
-    assert method_cls.supports_selective_reload  # explicit API, not base default
-    assert method_cls.refresh_derived_state is not QuantizeMethodBase.refresh_derived_state
+def test_awq_gemm_repeated_reload_without_pwal(monkeypatch):
+    """Native AWQ refresh must preserve packed values and storage without PWAL."""
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_rank", lambda: 0
+    )
+    monkeypatch.setattr(
+        "vllm.model_executor.parameter.get_tensor_model_parallel_world_size", lambda: 1
+    )
+    method = object.__new__(AutoAWQLinearMethod)
+    method.quant_config = SimpleNamespace(group_size=128, pack_factor=8)
+    layer = torch.nn.Module()
+    layer.quant_method = method
+    method.create_weights(
+        layer,
+        input_size_per_partition=128,
+        output_partition_sizes=[128],
+        input_size=128,
+        output_size=128,
+        params_dtype=torch.float16,
+        weight_loader=default_weight_loader,
+    )
+    names = ("qweight", "qzeros", "scales")
+    record_metadata_for_reloading(layer)
+    method.process_weights_after_loading(layer)
+    original = {name: getattr(layer, name) for name in names}
+    pointers = {name: param.data_ptr() for name, param in original.items()}
+    monkeypatch.setattr(
+        method,
+        "process_weights_after_loading",
+        Mock(side_effect=AssertionError("PWAL called during reload")),
+    )
+
+    for generation in (1, 2):
+        initialize_layerwise_reload(layer)
+        for name in reversed(names):
+            param = getattr(layer, name)
+            value = torch.full(
+                param.shape, generation, dtype=param.dtype, device="cpu"
+            )
+            param.weight_loader(param, value)
+        finalize_layerwise_reload(layer, model_config=None)
+        method.refresh_derived_state(layer)
+        method.refresh_derived_state(layer)
+        for name in names:
+            param = getattr(layer, name)
+            assert param is original[name]
+            assert param.data_ptr() == pointers[name]
+            assert torch.equal(param, torch.full_like(param, generation))
+    method.process_weights_after_loading.assert_not_called()
 
 
 def test_kv_cache_scale_refresh_recomputes_in_place():
