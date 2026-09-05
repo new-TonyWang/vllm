@@ -431,8 +431,10 @@ kernel 编译次数均验证。
 这一批不是简单的 derived state，必须先保存 checkpoint/runtime 两种布局的
 storage 语义，再实现 refresh。
 
-- [x] FP8 per-tensor transpose/requant：`fp8.py`、scaled-mm FP8 实现已审计，
-  因跨 shard requant、transpose 和 Parameter 替换保留 fallback。
+- [ ] FP8 per-tensor transpose/requant：`fp8.py`、scaled-mm FP8 实现需要先把
+  checkpoint-layout 参数暂存，再由 `refresh_derived_state` 重建 runtime layout；
+  当前已完成实验性 opt-in 和 Qwen3-30B-FP8 H200 验证，仍需补齐 Marlin/online
+  分支的 storage identity 与 A/B 数值验收。
 - [x] DeepGEMM、FlashInfer、AITER 的 block-scale/layout shuffle 已审计；
   依赖 runtime/layout 生命周期的路径保留 fallback。
 - [x] Marlin、Machete、WNA16、MXFP4/MXFP8/NVFP4 repack 已审计；
@@ -443,11 +445,14 @@ storage 语义，再实现 refresh。
   `restore_weights_before_loading()`；具体 backend 仅在能记录并复用原始
   shape/stride/layout 时才允许后续 opt-in。
 - [x] 约束已固化：冷启动允许 replace，refresh 只能写入既有 storage；未能
-  提取纯变换函数的 backend 保持 fallback。
+  提取纯变换函数的 backend 保持 fallback。layerwise reload 对已 opt-in 方法
+  先在 staging layer 调用 refresh，再 copy 回冷启动保存的 storage，reload 阶段
+  不调用 PWAL。
 - [x] 已明确 shape-changing 与 data_ptr 不可稳定的 backend，继续 fallback。
 
-审计备注：当前 FP8 per-tensor 与 compressed-tensors FP8 路径仍显式 fallback；
-它们包含跨 logical shard requant、transpose 和 Parameter 重注册。通用
+审计备注：compressed-tensors FP8 路径仍显式 fallback；它包含跨 logical shard
+requant、transpose 和 Parameter 重注册。原生 `Fp8LinearMethod` per-tensor 路径
+已进入实验性 staging/refresh 路径，但尚未宣称所有 backend 均安全。通用
 `restore_weights_before_loading()` 调用点现已接入 layerwise 初始化，但这些
 后端仍没有可复用的原始 storage/布局协议，暂不能证明 storage identity。
 CutlassBatchedExpertsFp8 无额外后处理状态，BatchedDeepGemmExperts 依赖

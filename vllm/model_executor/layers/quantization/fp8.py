@@ -413,6 +413,19 @@ class Fp8LinearMethod(LinearMethodBase):
 
         self.fp8_linear.process_weights_after_loading(layer)
 
+    def supports_selective_reload(self) -> bool:
+        """Use checkpoint-layout staging plus an in-place derived refresh."""
+        return True
+
+    def refresh_derived_state(
+        self,
+        layer: torch.nn.Module,
+        updated_parameter_names: frozenset[str] | None = None,
+    ) -> None:
+        """Rebuild FP8 runtime layout from staged checkpoint parameters."""
+        del updated_parameter_names
+        self.process_weights_after_loading(layer)
+
     def apply(
         self,
         layer: torch.nn.Module,

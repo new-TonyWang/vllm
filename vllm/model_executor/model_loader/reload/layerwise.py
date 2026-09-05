@@ -351,7 +351,11 @@ def _reload_attention_scales(layer: torch.nn.Module, info: LayerReloadingInfo) -
     _copy_and_restore_kernel_tensors(layer, info)
 
 
-def _layerwise_process(layer: torch.nn.Module, info: LayerReloadingInfo):
+def _layerwise_process(
+    layer: torch.nn.Module,
+    info: LayerReloadingInfo,
+    updated_parameter_names: frozenset[str] | None = None,
+):
     """
     Finalize layer loading after all weights have been buffered.
 
@@ -381,15 +385,27 @@ def _layerwise_process(layer: torch.nn.Module, info: LayerReloadingInfo):
 
     # Process weights (quantization, repacking, etc.)
     quant_method = getattr(layer, "quant_method", None)
-    if isinstance(quant_method, QuantizeMethodBase) and not _supports_selective_reload(
-        layer
-    ):
+    selective_reload = _supports_selective_reload(layer)
+    if isinstance(quant_method, QuantizeMethodBase) and not selective_reload:
         quant_method.process_weights_after_loading(layer)
         # Re-reconcile parameter TP state: process_weights_after_loading may
         # have re-created Parameters (stamped with the global rank), which would
         # otherwise break replicated (disable_tp) weights on a subsequent reload.
         if hasattr(layer, "update_param_tp_status"):
             layer.update_param_tp_status()
+
+    # Selective methods receive checkpoint-layout parameters in this temporary
+    # layer. They must rebuild runtime-derived state before the transformed
+    # values are copied back to the original storage captured above. This keeps
+    # PWAL on the cold-load path only.
+    if selective_reload:
+        refresh = getattr(quant_method, "refresh_derived_state", None)
+        if refresh is None:
+            raise RuntimeError(
+                f"{type(quant_method).__name__} opted into selective reload "
+                "without refresh_derived_state"
+            )
+        refresh(layer, updated_parameter_names)
 
     # Copy processed values into original tensor storage (preserves cudagraph refs)
     # this code is a no-op if not reloading (because kernel tensors is empty)

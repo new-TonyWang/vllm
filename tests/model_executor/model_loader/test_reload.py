@@ -21,6 +21,11 @@ from vllm.model_executor.layers.attention.mla_attention import MLAAttention
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.layers.linear import QKVParallelLinear
 from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
+from vllm.model_executor.layers.quantization.auto_awq import (
+    AutoAWQLinearMethod,
+    AutoAWQMarlinLinearMethod,
+)
+from vllm.model_executor.layers.quantization.fp8 import Fp8LinearMethod
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 import vllm.models.deepseek_v4.nvidia.model as deepseek_v4_nvidia
 from vllm.models.deepseek_v4.nvidia.mtp import DeepSeekV4MTP as DeepseekV4NvidiaMTP
@@ -195,6 +200,16 @@ def test_layerwise_reload_restores_before_loading_and_refreshes_after():
 
     assert events == ["restore", "refresh"]
     assert torch.equal(layer.weight, torch.full((2,), 3.0))
+
+
+@pytest.mark.parametrize(
+    "method_cls",
+    [Fp8LinearMethod, AutoAWQLinearMethod, AutoAWQMarlinLinearMethod],
+)
+def test_block_and_per_tensor_quant_methods_opt_into_refresh(method_cls):
+    """Quantized reload uses staged params and refresh, not PWAL."""
+    assert method_cls.supports_selective_reload  # explicit API, not base default
+    assert method_cls.refresh_derived_state is not QuantizeMethodBase.refresh_derived_state
 
 
 def test_kv_cache_scale_refresh_recomputes_in_place():
