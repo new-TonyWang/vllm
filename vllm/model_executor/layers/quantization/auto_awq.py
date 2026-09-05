@@ -513,6 +513,13 @@ class AutoAWQMarlinLinearMethod(LinearMethodBase):
     def supports_selective_reload(self) -> bool:
         return True
 
+    def reload_parameter(self, layer, parameter_name, target, bound_args, loader):
+        """AWQ GEMM parameters already use the checkpoint layout."""
+        del layer, parameter_name
+        bound_args.arguments["param"] = target
+        loader(*bound_args.args, **bound_args.kwargs)
+        return True
+
     def refresh_derived_state(
         self,
         layer: torch.nn.Module,
