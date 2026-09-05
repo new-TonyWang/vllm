@@ -79,10 +79,6 @@ class QuantizeMethodBase(ABC):
         """Restore runtime storage to checkpoint layout before an update."""
         return
 
-    def reload_parameter(self, layer, parameter_name, target, bound_args, loader) -> bool:
-        """Optionally consume one reload parameter directly into runtime storage."""
-        return False
-
     def refresh_derived_state(
         self,
         layer: nn.Module,
