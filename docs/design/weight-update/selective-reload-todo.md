@@ -198,6 +198,10 @@ hash 均为 `f022632b...`（该 hash 不包含 tensor 内容），实际 safeten
     - [x] online per-tensor FP8 MoE：CUTLASS linear 与 TRITON FP8 MoE 选择证据、
     65 tensors / 6,329,376,768 bytes / 4 buckets、统一 verifier 和 H200
     `rc=0` 均通过。
+    - [x] serialized FP8 MoE class evidence：Qwen3-30B-FP8 的运行时 probe 明确
+    枚举到 `model.layers.*.mlp.experts` 与 `routed_experts` 的
+    `Fp8MoEMethod`（`vllm.model_executor.layers.quantization.fp8`，TRITON，
+    block quant），并与 day0 reload 结果关联；不能只用 backend 日志替代类证据。
 - [x] 重验大型/多卡模型：
     - [x] Qwen3.8 FP8 两层：DeepGEMM kernel 选择证据、398 tensors /
     7,251,989,472 bytes / 7 buckets、统一 verifier 和 H200 `rc=0` 均通过。
@@ -259,7 +263,7 @@ Qwen2.5 重验和 Llama A/B 重验覆盖。
     - [x] UPDATE 在接收 NCCL payload 前拒绝未声明及重复 tensor name；FINISH 拒绝
       缺失 tensor 以及缺失或不一致的 generation id。
     - [x] 只有 manifest 显式设置 `allow_partial=true` 时才允许集合不完整。
-    - [ ] 多 receiver rank 必须对 generation、received-name accounting 和最终提交结果
+- [x] 多 receiver rank 必须对 generation、received-name accounting 和最终提交结果
       达成一致；注入单 rank 失败并验证其余 rank 不得提交。
 - [ ] 为同步 `LLM`、`AsyncLLM` 和 draft-model update 覆盖相同的提交与缓存失效
   契约，并补充失败注入单元测试。
