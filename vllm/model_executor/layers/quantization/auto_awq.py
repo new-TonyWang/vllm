@@ -511,15 +511,7 @@ class AutoAWQMarlinLinearMethod(LinearMethodBase):
         self.kernel.process_weights_after_loading(layer)
 
     def supports_selective_reload(self) -> bool:
-        return True
-
-    def refresh_derived_state(
-        self,
-        layer: torch.nn.Module,
-        updated_parameter_names: frozenset[str] | None = None,
-    ) -> None:
-        del updated_parameter_names
-        self.process_weights_after_loading(layer)
+        return False
 
     def apply(
         self,

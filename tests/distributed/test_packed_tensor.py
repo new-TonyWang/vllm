@@ -354,6 +354,23 @@ class TestUnpackTensor:
 # --- Unit Tests: pack_tensors ---
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
+def test_pack_scalar_scale_round_trip(dtype):
+    """Per-tensor quantization scales retain scalar shape through transport."""
+    scale = torch.tensor(0.5, dtype=dtype)
+    chunk = pack_tensors(iter([("weight_scale", scale)]), lambda x: x[1], 1024)
+    assert chunk is not None
+    restored = unpack_tensor(
+        chunk.packed_tensor,
+        chunk.names,
+        chunk.shapes,
+        chunk.dtypes,
+        chunk.tensor_sizes,
+    )
+    assert restored[0][0] == "weight_scale"
+    torch.testing.assert_close(restored[0][1], scale, rtol=0, atol=0)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 class TestPackTensors:
     """Test the shared pack_tensors function."""

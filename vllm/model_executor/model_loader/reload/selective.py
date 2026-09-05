@@ -27,6 +27,7 @@ def refresh_derived_state(
         if not (module_opted_in or method_opted_in):
             continue
         refresh = getattr(module, "refresh_derived_state", None)
-        if refresh is None:
-            continue
-        refresh(names)
+        if refresh is not None:
+            refresh(names)
+        elif method_opted_in:
+            method.refresh_derived_state(module, names)

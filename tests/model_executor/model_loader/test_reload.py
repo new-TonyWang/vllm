@@ -12,39 +12,34 @@ from torch.nn.parameter import UninitializedParameter
 
 import vllm.model_executor.model_loader.reload.layerwise as reload_layerwise
 import vllm.model_executor.model_loader.reload.meta as reload_meta
-from vllm.model_executor.model_loader.reload.selective import (
-    refresh_derived_state,
-)
+import vllm.models.deepseek_v4.nvidia.model as deepseek_v4_nvidia
 from vllm.config import ModelConfig
 from vllm.model_executor.layers.attention import MMEncoderAttention
 from vllm.model_executor.layers.attention.mla_attention import MLAAttention
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
-from vllm.model_executor.layers.linear import QKVParallelLinear
-from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
-from vllm.model_executor.layers.quantization.auto_awq import AutoAWQLinearMethod
-from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
-import vllm.models.deepseek_v4.nvidia.model as deepseek_v4_nvidia
-from vllm.models.deepseek_v4.nvidia.mtp import DeepSeekV4MTP as DeepseekV4NvidiaMTP
-from vllm.models.deepseek_v4.nvidia.dspark import (
-    DSparkDeepseekV4ForCausalLM as DeepseekV4NvidiaDSpark,
+from vllm.model_executor.layers.fused_moe.experts import (
+    flashinfer_cutedsl_batched_moe,
 )
-from vllm.models.kimi_k3.nvidia.mla import MultiHeadLatentAttention
-from vllm.model_executor.layers.fused_moe.experts.trtllm_nvfp4_moe import (
-    TrtLlmNvFp4ExpertsBase,
+from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import CutlassExpertsFp4
+from vllm.model_executor.layers.fused_moe.experts.flashinfer_b12x_moe import (
+    FlashInferB12xExperts,
 )
 from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutedsl_moe import (
     FlashInferCuteDSLExperts,
 )
-from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutedsl_batched_moe import (
-    FlashInferCuteDSLBatchedExperts,
-)
-from vllm.model_executor.layers.fused_moe.experts.cutlass_moe import CutlassExpertsFp4
 from vllm.model_executor.layers.fused_moe.experts.flashinfer_cutlass_moe import (
     FlashInferExperts,
 )
-from vllm.model_executor.layers.fused_moe.experts.flashinfer_b12x_moe import (
-    FlashInferB12xExperts,
+from vllm.model_executor.layers.fused_moe.experts.trtllm_nvfp4_moe import (
+    TrtLlmNvFp4ExpertsBase,
 )
+from vllm.model_executor.layers.linear import QKVParallelLinear
+from vllm.model_executor.layers.quantization.auto_awq import (
+    AutoAWQLinearMethod,
+    AutoAWQMarlinLinearMethod,
+)
+from vllm.model_executor.layers.quantization.base_config import QuantizeMethodBase
+from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.model_executor.model_loader.reload.layerwise import (
     finalize_layerwise_reload,
     initialize_layerwise_reload,
@@ -59,12 +54,20 @@ from vllm.model_executor.model_loader.reload.meta import (
     restore_layer_on_meta,
     to_meta_tensor,
 )
+from vllm.model_executor.model_loader.reload.selective import (
+    refresh_derived_state,
+)
 from vllm.model_executor.model_loader.reload.types import LayerReloadingInfo
 from vllm.model_executor.model_loader.reload.utils import get_layer_tensors
 from vllm.model_executor.model_loader.weight_utils import (
     composed_weight_loader,
     default_weight_loader,
 )
+from vllm.models.deepseek_v4.nvidia.dspark import (
+    DSparkDeepseekV4ForCausalLM as DeepseekV4NvidiaDSpark,
+)
+from vllm.models.deepseek_v4.nvidia.mtp import DeepSeekV4MTP as DeepseekV4NvidiaMTP
+from vllm.models.kimi_k3.nvidia.mla import MultiHeadLatentAttention
 from vllm.platforms import current_platform
 
 
@@ -198,6 +201,12 @@ def test_layerwise_reload_restores_before_loading_and_refreshes_after():
     assert torch.equal(layer.weight, torch.full((2,), 3.0))
 
 
+def test_awq_marlin_repack_does_not_opt_into_selective_reload():
+    """The repack backend must use fallback until it has an in-place refresh."""
+    method = object.__new__(AutoAWQMarlinLinearMethod)
+    assert not method.supports_selective_reload()
+
+
 def test_awq_gemm_repeated_reload_without_pwal(monkeypatch):
     """Native AWQ refresh must preserve packed values and storage without PWAL."""
     monkeypatch.setattr(
@@ -234,9 +243,7 @@ def test_awq_gemm_repeated_reload_without_pwal(monkeypatch):
         initialize_layerwise_reload(layer)
         for name in reversed(names):
             param = getattr(layer, name)
-            value = torch.full(
-                param.shape, generation, dtype=param.dtype, device="cpu"
-            )
+            value = torch.full(param.shape, generation, dtype=param.dtype, device="cpu")
             param.weight_loader(param, value)
             info = reload_layerwise.get_layerwise_info(layer)
             assert name in info.eager_parameter_names
@@ -500,12 +507,8 @@ def test_trtllm_nvfp4_refresh_recomputes_scales_in_place():
     experts.refresh_derived_state(layer, frozenset({"w13_input_scale"}))
     experts.refresh_derived_state(layer, frozenset({"w13_input_scale"}))
 
-    assert torch.equal(
-        layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]])
-    )
-    assert torch.equal(
-        layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]])
-    )
+    assert torch.equal(layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]]))
+    assert torch.equal(layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]]))
     assert layer.w13_weight_scale_2.data_ptr() == w13_ptr
     assert layer.w2_weight_scale_2.data_ptr() == w2_ptr
 
@@ -521,7 +524,10 @@ def test_trtllm_nvfp4_refresh_recomputes_scales_in_place():
     "experts_cls,quant_config",
     [
         (FlashInferCuteDSLExperts, SimpleNamespace()),
-        (FlashInferCuteDSLBatchedExperts, SimpleNamespace()),
+        (
+            flashinfer_cutedsl_batched_moe.FlashInferCuteDSLBatchedExperts,
+            SimpleNamespace(),
+        ),
         (CutlassExpertsFp4, SimpleNamespace()),
         (FlashInferExperts, SimpleNamespace(use_nvfp4_w4a4=True)),
     ],
@@ -546,12 +552,8 @@ def test_nvfp4_expert_scale_refresh_is_idempotent(experts_cls, quant_config):
     experts.refresh_derived_state(layer, names)
     experts.refresh_derived_state(layer, names)
 
-    assert torch.equal(
-        layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]])
-    )
-    assert torch.equal(
-        layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]])
-    )
+    assert torch.equal(layer.w13_weight_scale_2, torch.tensor([[6.0, 7.0], [6.0, 7.0]]))
+    assert torch.equal(layer.w2_weight_scale_2, torch.tensor([[8.0, 9.0], [8.0, 9.0]]))
     assert ptrs == (
         layer.w13_weight_scale_2.data_ptr(),
         layer.w2_weight_scale_2.data_ptr(),
@@ -583,9 +585,7 @@ def test_flashinfer_b12x_scale_refresh_rebuilds_mma_in_place(monkeypatch):
     mma_ptr = experts.w1_sf_mma.data_ptr()
 
     with torch.no_grad():
-        layer.w13_weight_scale.copy_(
-            torch.full_like(layer.w13_weight_scale, 10.0)
-        )
+        layer.w13_weight_scale.copy_(torch.full_like(layer.w13_weight_scale, 10.0))
         layer.w13_weight_scale_2.copy_(torch.tensor([6.0, 7.0]))
     experts.refresh_derived_state(
         layer, frozenset({"w13_weight_scale", "w13_weight_scale_2"})

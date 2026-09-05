@@ -434,12 +434,43 @@ storage 语义，再实现 refresh。
 - [x] AWQ 原生 GEMM 的 refresh 不再调用 PWAL：该后端直接消费 checkpoint
   布局，无需重新注册 Parameter。固定 vLLM 环境的行为测试在冷启动后禁用
   PWAL，连续两次 reload 检查 qweight/qzeros/scales 值、对象和地址稳定。
-- [ ] AWQ 分类①接通逐参数 eager copy，避免沿用整层缓冲；Marlin repack
-  独立实现并验证。上述单测不等价于完整 AWQ day0 验收。
-- [ ] FP8 per-tensor transpose/requant：`fp8.py`、scaled-mm FP8 实现需要先把
+- [x] AWQ 分类①接通逐参数 eager copy，避免沿用整层缓冲；native GEMM
+  的 cold/warm/cold day0 对照已完成。112 个实际 `AutoAWQLinearMethod` 层的
+  参数对象与地址保持，28 层权重改变，warm-B 字节哈希与独立 cold-B 一致，
+  生成结果一致，冷启动后的 PWAL guard 调用为零。731 tensors /
+  1,614,472,192 bytes / 4 buckets / transfer world size 2；协议校验 PASS；
+  H200 `status=ok rc=0 seconds=79.74`。证据：
+  `/inspire/hdd/global_user/wangtongyu-25057/day0-awq-native-ab-20260905-03/`。
+  Marlin/Machete repack 明确保持 fallback，`AutoAWQMarlinLinearMethod` 不宣称
+  selective reload，尚未实现原地 repack。
+- [x] FP8 per-tensor transpose/requant：`fp8.py`、scaled-mm FP8 实现先把
   checkpoint-layout 参数暂存，再由 `refresh_derived_state` 重建 runtime layout；
-  当前实验性 opt-in 的 refresh 仍调用 PWAL，不满足目标契约。
-  Qwen3-30B-FP8 是 block-FP8，不能证明 per-tensor 覆盖；需要重新实现并验证。
+  当前工作树新增 serialized per-tensor CUTLASS 的逐参数 staging 与 FINISH
+  原地刷新，不调用 method/kernel PWAL。动态/静态 activation、对齐/padding、
+  完整/缺失 weight shard、重复/重叠 shard、缺失 scale 共 20 个 GPU 用例通过：
+  不同 fused shard scale、两轮更新、重复 refresh、对象与地址保持；非法覆盖
+  拒绝提交且不改 runtime。真实 day0 对照 64 个 `Fp8LinearMethod` 层，16 层
+  权重改变，warm-B 与 cold-B 的字节哈希和生成结果一致，PWAL guard 调用为零；
+  258 tensors / 1,498,550,720 bytes / 3 buckets / transfer world size 2；
+  协议校验 PASS；H200 `status=ok rc=0 seconds=87.99`。证据：
+  `/inspire/hdd/global_user/wangtongyu-25057/day0-fp8-per-tensor-ab-20260905-03/`。
+  2026-09-05 完成 serialized per-tensor CUTLASS 的真实 day0 A→B/cold-B
+  对照：从本地 Llama-3.2-1B-Instruct 派生实验 FP8 checkpoint，B 将所有
+  `v_proj.weight` 清零。64 个 FP8 linear 层的 Parameter 对象与地址保持，
+  16 层 runtime 权重确实改变；所有被检查参数的字节哈希与独立 cold-B 一致，
+  单个确定性 prompt 的生成文本和返回 logprobs 一致。冷启动后 method/kernel
+  PWAL 均安装抛错 guard，调用计数为零。这不是模型精度评测，也不覆盖 TP>1、
+  CUDA graph、在线量化、block FP8 或 MoE。
+  证据目录（qz_dev）：
+  `/inspire/hdd/global_user/wangtongyu-25057/day0-fp8-per-tensor-ab-20260905-02/`，
+  包含 `evidence.json`、`comparison.json`、`update.json` 和 server/client logs。
+  generation `day0-c1b9e4d080fa4e7fb91a00d45254f3a0`：258 tensors /
+  1,498,550,720 bytes / 3 buckets / transfer world size 2；严格协议校验 PASS。
+  实验 H200 `status=ok rc=0 seconds=87.12`。首次实验发现并修复 packed
+  transport 对零维 scale 的打包/还原错误；3 个 scalar round-trip、6 个既有
+  pack tests、2 个 selective dispatcher、1 个 AWQ 及 8 个 FP8 用例共 20 passed，
+  回归与协议校验的 H200 `status=ok rc=0 seconds=21.55`。
+  Qwen3-30B-FP8 是 block-FP8，不能证明 per-tensor 覆盖。
 - [x] DeepGEMM、FlashInfer、AITER 的 block-scale/layout shuffle 已审计；
   依赖 runtime/layout 生命周期的路径保留 fallback。
 - [x] Marlin、Machete、WNA16、MXFP4/MXFP8/NVFP4 repack 已审计；
