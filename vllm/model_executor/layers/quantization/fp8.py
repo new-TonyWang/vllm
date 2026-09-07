@@ -787,6 +787,10 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         w2_input_scale: torch.Tensor | None,
     ) -> None:
         if self.supports_selective_reload():
+            # The source tensors are checkpoint-layout parameters loaded by the
+            # weight loader. Keep their references alive while the layer is
+            # re-registered with runtime-layout storage; the converted values
+            # are copied into that storage by _install_moe_kernel.
             self._prepare_moe_runtime(layer, w13, w2, w13_scale, w2_scale)
         w13, w2, w13_scale, w2_scale = self._convert_moe_runtime(
             layer=layer,
