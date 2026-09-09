@@ -236,6 +236,21 @@ class Fp8Config(QuantizationConfig):
         return cache_scale_mapper | QuantizationConfig.get_cache_scale_mapper()
 
 
+# FP8 block-wise dense kernels whose runtime layout matches the checkpoint
+_FP8_BLOCK_HOOK_IDENTITY_KERNELS = {
+    "TritonFp8BlockScaledMMKernel",
+    "CutlassFp8BlockScaledMMKernel",
+    "FlashInferFp8BlockScaledMMKernel",
+    "BlockWiseTorchFP8ScaledMMLinearKernel",
+}
+
+# FP8 block-wise dense kernels that transform the scale layout after loading
+_FP8_BLOCK_HOOK_DEEPGEMM_KERNELS = {
+    "DeepGemmFp8BlockScaledMMKernel",
+    "FlashInferFp8DeepGEMMDynamicBlockScaledKernel",
+}
+
+
 class Fp8LinearMethod(LinearMethodBase):
     """Linear method for FP8.
     Supports loading FP8 checkpoints with static weight scale and
@@ -422,6 +437,51 @@ class Fp8LinearMethod(LinearMethodBase):
             and type(getattr(self, "fp8_linear", None))
             is CutlassFP8ScaledMMLinearKernel
         )
+
+    def supports_hook_reload(self) -> bool:
+        """Offline FP8 per-block kernels whose reload layout is hook-supported."""
+        if not (self.block_quant and self.quant_config.is_checkpoint_fp8_serialized):
+            return False
+        if getattr(self, "use_marlin", False):
+            return False
+        kernel = getattr(self, "fp8_linear", None)
+        if kernel is None:
+            return False
+        name = type(kernel).__name__
+        if name in _FP8_BLOCK_HOOK_DEEPGEMM_KERNELS:
+            # UE8M0 requantizes the weights themselves; hook path keeps
+            # weight writes in place, so fall back to the layerwise path.
+            return not getattr(kernel, "use_deep_gemm_e8m0", False)
+        return name in _FP8_BLOCK_HOOK_IDENTITY_KERNELS
+
+    def make_reload_hook(
+        self, layer, param_name, slot, original_loader, cold_param=None
+    ):
+        """Build the reload hook for one parameter of this layer."""
+        from vllm.model_executor.model_loader.reload.fp8_block import (
+            DeepGemmScaleHook,
+            Fp8BlockIdentityHook,
+        )
+
+        kernel = getattr(self, "fp8_linear", None)
+        deepgemm = type(kernel).__name__ in _FP8_BLOCK_HOOK_DEEPGEMM_KERNELS
+        if param_name == "weight_scale_inv" and deepgemm:
+            assert self.weight_block_size is not None
+            block_n, block_k = self.weight_block_size
+            rows, cols = layer.weight.shape
+            return DeepGemmScaleHook(
+                slot,
+                original_loader,
+                staging_shape=(
+                    (rows + block_n - 1) // block_n,
+                    (cols + block_k - 1) // block_k,
+                ),
+                block_shape=(block_n, block_k),
+                mn=rows,
+                k=cols,
+                staging_template=cold_param,
+            )
+        return Fp8BlockIdentityHook(slot, original_loader)
 
     def restore_weights_before_loading(self, layer: torch.nn.Module) -> None:
         if self.supports_selective_reload():
@@ -949,6 +1009,86 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         self._setup_kernel(
             layer, w13, w2, w13_scale, w2_scale, w13_input_scale, w2_input_scale
         )
+
+    def supports_hook_reload(self) -> bool:
+        """Offline FP8 per-block MoE backends with hook-supported layouts."""
+        if not (self.block_quant and self.quant_config.is_checkpoint_fp8_serialized):
+            return False
+        # Refined block grids upsample scales at load time; the runtime scale
+        # shape then differs from the checkpoint's, which the hook path does
+        # not map. Fall back to the layerwise path for those models.
+        if self.weight_scale_refine is not None:
+            return False
+        if self.fp8_backend in (
+            Fp8MoeBackend.DEEPGEMM,
+            Fp8MoeBackend.BATCHED_DEEPGEMM,
+        ):
+            from vllm.utils.deep_gemm import is_deep_gemm_e8m0_used
+
+            if is_deep_gemm_e8m0_used():
+                # UE8M0 requantizes weights in place; not hook-supported
+                return False
+        return self.fp8_backend in (
+            Fp8MoeBackend.TRITON,
+            Fp8MoeBackend.BATCHED_TRITON,
+            Fp8MoeBackend.DEEPGEMM,
+            Fp8MoeBackend.BATCHED_DEEPGEMM,
+            Fp8MoeBackend.FLASHINFER_CUTLASS,
+        )
+
+    def make_reload_hook(
+        self, layer, param_name, slot, original_loader, cold_param=None
+    ):
+        """Build the reload hook for one parameter of this MoE layer."""
+        from vllm.model_executor.layers.quantization.utils.flashinfer_utils import (
+            FI_CUTLASS_MIN_BLOCK_SCALE,
+        )
+        from vllm.model_executor.model_loader.reload.fp8_block import (
+            DeepGemmScaleHook,
+            Fp8BlockClampHook,
+            Fp8BlockIdentityHook,
+            Fp8MoeW31SwapHook,
+        )
+
+        deepgemm = self.fp8_backend in (
+            Fp8MoeBackend.DEEPGEMM,
+            Fp8MoeBackend.BATCHED_DEEPGEMM,
+        )
+        fi_cutlass = self.fp8_backend == Fp8MoeBackend.FLASHINFER_CUTLASS
+        is_w13 = param_name.startswith("w13")
+        is_scale = param_name.endswith(self.weight_scale_name)
+
+        if is_w13 and fi_cutlass:
+            # cold load swaps w13 halves (w13 -> w31) and clamps block scales
+            return Fp8MoeW31SwapHook(
+                slot,
+                original_loader,
+                clamp_min=FI_CUTLASS_MIN_BLOCK_SCALE if is_scale else None,
+            )
+        if is_scale and deepgemm:
+            assert self.weight_block_size is not None
+            block_n, block_k = self.weight_block_size
+            weight = layer.w13_weight if is_w13 else layer.w2_weight
+            num_experts, rows, cols = weight.shape
+            return DeepGemmScaleHook(
+                slot,
+                original_loader,
+                staging_shape=(
+                    num_experts,
+                    (rows + block_n - 1) // block_n,
+                    (cols + block_k - 1) // block_k,
+                ),
+                block_shape=(block_n, block_k),
+                mn=rows,
+                k=cols,
+                num_groups=num_experts,
+                staging_template=cold_param,
+            )
+        if is_scale and fi_cutlass:
+            return Fp8BlockClampHook(
+                slot, original_loader, clamp_min=FI_CUTLASS_MIN_BLOCK_SCALE
+            )
+        return Fp8BlockIdentityHook(slot, original_loader)
 
     def supports_selective_reload(self) -> bool:
         """Enable staged reload for the FlashInfer CUTLASS FP8 MoE backend."""

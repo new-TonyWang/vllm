@@ -166,6 +166,7 @@ class NCCLWeightTransferEngine(
             self.model,
             self.model_config,
             lora_enabled=self.vllm_config.lora_config is not None,
+            quant_config=self.vllm_config.quant_config,
         )
 
     def finish_weight_update(self) -> None:

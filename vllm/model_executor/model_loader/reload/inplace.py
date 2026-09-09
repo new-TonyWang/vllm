@@ -107,7 +107,7 @@ class LoaderWeightHook(WeightReloadHook):
 
     def load_from_loader(self, bound_args: inspect.BoundArguments) -> Any:
         """Entry point for the wrapped weight loader."""
-        key = _shard_key(bound_args)
+        key = self._arrival_key(bound_args)
         if not self._begin_shard(str(key)):
             return None  # deduplicated tied-weight arrival
         loaded = bound_args.arguments.get("loaded_weight")
@@ -116,11 +116,26 @@ class LoaderWeightHook(WeightReloadHook):
                 f"Loader for {self.name!r} received a non-tensor payload"
             )
         self.tracker.validate(key, loaded.shape)
+        bound_args = self._pre_delegate(bound_args)
         result = self._original_loader(*bound_args.args, **bound_args.kwargs)
         self.tracker.mark_arrived(key)
         self.post_load()
         self._commit_if_complete()
         return result
+
+    def _arrival_key(self, bound_args: inspect.BoundArguments) -> Hashable:
+        """Tracking key for one loader call; overridable by mapping hooks."""
+        return _shard_key(bound_args)
+
+    def _pre_delegate(
+        self, bound_args: inspect.BoundArguments
+    ) -> inspect.BoundArguments:
+        """Adjust bound args after validation, before the original loader.
+
+        Mapping hooks override this to redirect the write (e.g. swap the
+        shard's target half, or substitute a staging buffer).
+        """
+        return bound_args
 
     def _write_shard(self, shard: WeightShard) -> None:
         raise NotImplementedError(
@@ -248,9 +263,25 @@ def reload_used_hooks(model: torch.nn.Module) -> bool:
     return plan is not None and plan.ctx is not None
 
 
-def supports_hook_reload(model_config: ModelConfig, lora_enabled: bool) -> bool:
-    """Non-quantized models (bf16/fp16/fp32) reload through hooks."""
-    return model_config.quantization is None and not lora_enabled
+def supports_hook_reload(
+    model_config: ModelConfig,
+    lora_enabled: bool,
+    quant_config: Any = None,
+) -> bool:
+    """Non-quantized and offline FP8 per-block models reload through hooks."""
+    if lora_enabled:
+        return False
+    if model_config.quantization is None:
+        return True
+    # Offline FP8 per-block: checkpoint is already FP8 + block scales.
+    # Per-backend support is decided per layer at hook construction; an
+    # unsupported backend falls the whole model back to the layerwise path.
+    return (
+        model_config.quantization == "fp8"
+        and quant_config is not None
+        and getattr(quant_config, "weight_block_size", None) is not None
+        and getattr(quant_config, "is_checkpoint_fp8_serialized", False)
+    )
 
 
 def initialize_reload(
@@ -258,6 +289,7 @@ def initialize_reload(
     model_config: ModelConfig,
     *,
     lora_enabled: bool = False,
+    quant_config: Any = None,
 ) -> None:
     """Enter a reload round; hook path for non-quantized models.
 
@@ -268,7 +300,7 @@ def initialize_reload(
     use_hooks = (
         plan is not None
         and any(r.expected for r in plan.records.values())
-        and supports_hook_reload(model_config, lora_enabled)
+        and supports_hook_reload(model_config, lora_enabled, quant_config)
     )
     if plan is not None:
         plan.frozen = True
@@ -280,23 +312,116 @@ def initialize_reload(
 
     assert plan is not None
     if plan.ctx is None:
-        ctx = ReloadContext()
-        for record in plan.records.values():
-            if not record.expected:
-                continue
-            try:
-                slot = RuntimeSlot(record.name, record.param)
-            except (RuntimeError, ValueError):
-                record.expected = None  # no stable row view; stop tracking
-                continue
-            hook = LoaderWeightHook(slot, record.original_loader)
-            for key, shape in record.expected.items():
-                hook.tracker.add_slot(key, shape)
-            record.hook = hook
-            ctx.register(hook)
+        ctx = _build_hook_context(model, model_config, plan)
+        if ctx is None:
+            # a quantized layer reported no hook support: fall the whole
+            # model back to the layerwise path
+            from .layerwise import initialize_layerwise_reload
+
+            initialize_layerwise_reload(model)
+            return
         plan.ctx = ctx
     plan.ctx.start_reload()
     plan.active = True
+
+
+def _restore_param_identity(cold: torch.Tensor, live: torch.Tensor) -> None:
+    """Restore the cold-load parameter identity on a PWAL-replaced param.
+
+    ``replace_parameter`` re-registers a plain ``torch.nn.Parameter``,
+    dropping the ``BasevLLMParameter`` subclass and loader attributes that
+    weight loaders rely on (e.g. ``load_qkv_weight``, ``tp_rank``,
+    ``output_dim``). Restore the cold-load class and any dropped attributes
+    on the live object; attributes PWAL set on the replacement win.
+    """
+    if type(live) is not type(cold):
+        live.__class__ = type(cold)
+    # drop a stale plain attribute so the BasevLLMParameter
+    # `weight_loader` property (restored with the class) is not shadowed
+    live.__dict__.pop("weight_loader", None)
+    for attr, value in cold.__dict__.items():
+        live.__dict__.setdefault(attr, value)
+
+
+def _build_hook_context(
+    model: torch.nn.Module,
+    model_config: ModelConfig,
+    plan: _ModelHookPlan,
+) -> ReloadContext | None:
+    """Build the per-parameter hooks. Returns None if any quantized layer
+    does not support the hook path (caller falls back to layerwise)."""
+    quantized = model_config.quantization is not None
+
+    # Parameters may have been replaced by process_weights_after_loading
+    # (replace_parameter carries our wrapper over to the new object);
+    # re-resolve every record against the live model.
+    live_tensors = dict(model.named_parameters())
+    live_tensors.update(dict(model.named_buffers()))
+    for record in plan.records.values():
+        live = live_tensors.get(record.name)
+        if live is None:
+            record.expected = None  # parameter gone; stop tracking it
+            continue
+        if live is not record.param:
+            _restore_param_identity(record.param, live)
+            record.param = live
+
+    # Quant hook factories: qualified param name -> (quant_method, module, local)
+    makers: dict[str, tuple[Any, torch.nn.Module, str]] = {}
+    if quantized:
+        modules = dict(model.named_modules())
+        for record in plan.records.values():
+            if not record.expected:
+                # never loaded from the checkpoint (e.g. attention kv-scale
+                # buffers): nothing to track, so the owning module needs no
+                # hook support
+                continue
+            module_name, _, local_name = record.name.rpartition(".")
+            module = modules.get(module_name)
+            quant_method = getattr(module, "quant_method", None) if module else None
+            if quant_method is None:
+                continue
+            # Unquantized sublayers of a mixed-quantization model (e.g. the
+            # embedding / lm_head / MoE gate of an FP8 checkpoint) hold plain
+            # bf16 params; the generic hook covers them.
+            if type(quant_method).__name__ in (
+                "UnquantizedLinearMethod",
+                "UnquantizedEmbeddingMethod",
+            ):
+                continue
+            maker = getattr(quant_method, "make_reload_hook", None)
+            capability = getattr(quant_method, "supports_hook_reload", None)
+            if not callable(maker) or not (callable(capability) and capability()):
+                return None
+            makers[record.name] = (quant_method, module, local_name)
+
+    ctx = ReloadContext()
+    for record in plan.records.values():
+        if not record.expected:
+            continue
+        try:
+            slot = RuntimeSlot(record.name, record.param)
+        except (RuntimeError, ValueError):
+            record.expected = None  # no stable row view; stop tracking
+            continue
+        if record.name in makers:
+            quant_method, module, local_name = makers[record.name]
+            hook = quant_method.make_reload_hook(
+                module,
+                local_name,
+                slot,
+                record.original_loader,
+                cold_param=record.param,
+            )
+            if hook is None:
+                return None
+        else:
+            hook = LoaderWeightHook(slot, record.original_loader)
+        for key, shape in record.expected.items():
+            hook.tracker.add_slot(key, shape)
+        record.hook = hook
+        ctx.register(hook)
+    return ctx
 
 
 def finalize_reload(

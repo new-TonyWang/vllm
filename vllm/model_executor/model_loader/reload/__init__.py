@@ -44,12 +44,22 @@ __all__ = [
     "MoeW13WeightHook",
     "MoeW2WeightHook",
     "VocabParallelWeightHook",
+    "Fp8BlockIdentityHook",
+    "Fp8BlockClampHook",
+    "Fp8MoeW31SwapHook",
+    "DeepGemmScaleHook",
     "WeightPlan",
     "build_reload_context",
     "expand_shards",
     "reload_from_state_dict",
 ]
 
+from .fp8_block import (
+    DeepGemmScaleHook,
+    Fp8BlockClampHook,
+    Fp8BlockIdentityHook,
+    Fp8MoeW31SwapHook,
+)
 from .hooks import (
     ArrivalTracker,
     HookState,

@@ -5659,6 +5659,7 @@ class GPUModelRunner(
                 model,
                 self.model_config,
                 lora_enabled=self.lora_config is not None,
+                quant_config=self.vllm_config.quant_config,
             )
             loaded_weights = model.load_weights(weights_iterator)
             finalize_reload(model, self.model_config)

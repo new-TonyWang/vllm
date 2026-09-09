@@ -462,6 +462,11 @@ def _shuffle_mxfp8_moe_weights(
     return w13_out, w2_out, w13_scale_out, w2_scale_out
 
 
+# Minimum block scale applied by the FlashInfer CUTLASS block-wise MoE path,
+# both at cold load and at hook reload (finish_load).
+FI_CUTLASS_MIN_BLOCK_SCALE = 1e-10
+
+
 def prepare_fp8_moe_layer_for_fi(
     layer: torch.nn.Module,
     w13: torch.Tensor,
@@ -549,8 +554,7 @@ def prepare_fp8_moe_layer_for_fi(
     # small minimum prevents this without affecting model accuracy since
     # these experts' effective weights are already zero.
     if block_quant:
-        _FI_CUTLASS_MIN_BLOCK_SCALE = 1e-10
-        w13_scale.clamp_(min=_FI_CUTLASS_MIN_BLOCK_SCALE)
-        w2_scale.clamp_(min=_FI_CUTLASS_MIN_BLOCK_SCALE)
+        w13_scale.clamp_(min=FI_CUTLASS_MIN_BLOCK_SCALE)
+        w2_scale.clamp_(min=FI_CUTLASS_MIN_BLOCK_SCALE)
 
     return w13, w2, w13_scale, w2_scale
