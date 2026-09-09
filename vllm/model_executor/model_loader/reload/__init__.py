@@ -32,6 +32,7 @@ __all__ = [
     "supports_hook_reload",
     "LoaderWeightHook",
     "ArrivalTracker",
+    "HookReloadUnsupportedError",
     "HookState",
     "ReloadContext",
     "ReloadIncomplete",
@@ -62,6 +63,7 @@ from .fp8_block import (
 )
 from .hooks import (
     ArrivalTracker,
+    HookReloadUnsupportedError,
     HookState,
     ReloadContext,
     ReloadIncomplete,

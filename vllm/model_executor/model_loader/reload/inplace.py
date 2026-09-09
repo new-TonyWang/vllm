@@ -24,8 +24,11 @@ How it works:
   runtime untouched) and delegate the actual write to the original loader,
   which already copies in place into the runtime storage. No meta-device
   detour, no staging buffer, pointer-stable.
-- **Fallback.** Quantized models (or models without an observed plan) keep
-  the layerwise path unchanged; the dispatcher picks per model.
+- **No fallback.** Unsupported configurations (other quantization schemes,
+  unsupported FP8 backends, missing cold-load plans, LoRA) raise
+  :class:`HookReloadUnsupportedError` instead of falling back to the
+  layerwise path; see
+  docs/design/weight-update/reload-hook-unsupported.md.
 
 Failure semantics follow the design: pre-write errors raise before any
 write; a partial round raises :class:`ReloadIncomplete` from
@@ -45,6 +48,7 @@ import torch
 
 from .hooks import (
     ArrivalTracker,
+    HookReloadUnsupportedError,
     ReloadContext,
     ReloadRejected,
     RuntimeSlot,
@@ -291,35 +295,36 @@ def initialize_reload(
     lora_enabled: bool = False,
     quant_config: Any = None,
 ) -> None:
-    """Enter a reload round; hook path for non-quantized models.
+    """Enter a reload round on the hook path. Pair with :func:`finalize_reload`.
 
-    Falls back to the layerwise path when hooks do not apply. Pair with
-    :func:`finalize_reload`.
+    Never falls back to the layerwise path: unsupported configurations
+    raise :class:`HookReloadUnsupportedError` (see
+    docs/design/weight-update/reload-hook-unsupported.md).
     """
     plan = _PLANS.get(model)
-    use_hooks = (
-        plan is not None
-        and any(r.expected for r in plan.records.values())
-        and supports_hook_reload(model_config, lora_enabled, quant_config)
-    )
     if plan is not None:
         plan.frozen = True
-    if not use_hooks:
-        from .layerwise import initialize_layerwise_reload
+    if plan is None or not any(r.expected for r in plan.records.values()):
+        raise HookReloadUnsupportedError(
+            "No observed cold-load plan for this model; hook reload "
+            "requires a prior cold load (dummy-init models are unsupported)"
+        )
+    if not supports_hook_reload(model_config, lora_enabled, quant_config):
+        raise HookReloadUnsupportedError(
+            f"Hook reload is not supported for "
+            f"quantization={model_config.quantization!r} "
+            f"(lora_enabled={lora_enabled}); see "
+            "docs/design/weight-update/reload-hook-unsupported.md"
+        )
 
-        initialize_layerwise_reload(model)
-        return
-
-    assert plan is not None
     if plan.ctx is None:
         ctx = _build_hook_context(model, model_config, plan)
         if ctx is None:
-            # a quantized layer reported no hook support: fall the whole
-            # model back to the layerwise path
-            from .layerwise import initialize_layerwise_reload
-
-            initialize_layerwise_reload(model)
-            return
+            raise HookReloadUnsupportedError(
+                "A quantized layer does not support hook reload "
+                f"(quantization={model_config.quantization!r}); see "
+                "docs/design/weight-update/reload-hook-unsupported.md"
+            )
         plan.ctx = ctx
     plan.ctx.start_reload()
     plan.active = True
@@ -349,7 +354,8 @@ def _build_hook_context(
     plan: _ModelHookPlan,
 ) -> ReloadContext | None:
     """Build the per-parameter hooks. Returns None if any quantized layer
-    does not support the hook path (caller falls back to layerwise)."""
+    does not support the hook path (caller raises HookReloadUnsupportedError).
+    """
     quantized = model_config.quantization is not None
 
     # Parameters may have been replaced by process_weights_after_loading
@@ -432,10 +438,9 @@ def finalize_reload(
     """Complete a reload round started by :func:`initialize_reload`."""
     plan = _PLANS.get(model)
     if plan is None or not plan.active:
-        from .layerwise import finalize_layerwise_reload
-
-        finalize_layerwise_reload(model, model_config)
-        return
+        raise HookReloadUnsupportedError(
+            "finalize_reload without a hook reload round in progress"
+        )
 
     assert plan.ctx is not None
     try:

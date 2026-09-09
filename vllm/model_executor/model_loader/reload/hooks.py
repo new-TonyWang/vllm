@@ -30,6 +30,7 @@ import torch
 __all__ = [
     "ReloadRejected",
     "ReloadIncomplete",
+    "HookReloadUnsupportedError",
     "WeightShard",
     "ArrivalTracker",
     "RuntimeSlot",
@@ -45,6 +46,15 @@ class ReloadRejected(RuntimeError):
 
 class ReloadIncomplete(RuntimeError):
     """Partial arrival detected at finish; engine state is undefined."""
+
+
+class HookReloadUnsupportedError(RuntimeError):
+    """This model/configuration has no hook reload support yet.
+
+    Raised instead of falling back to the layerwise path. See
+    docs/design/weight-update/reload-hook-unsupported.md for the list of
+    currently unsupported scenarios.
+    """
 
 
 @dataclass(frozen=True)

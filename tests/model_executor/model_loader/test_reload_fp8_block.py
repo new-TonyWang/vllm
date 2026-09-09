@@ -311,7 +311,12 @@ def test_fp8_block_model_uses_hook_path():
         assert p.data_ptr() == ptrs[name]
 
 
-def test_fp8_unsupported_backend_falls_back(monkeypatch):
+def test_fp8_unsupported_backend_raises_not_falls_back(monkeypatch):
+    # hook reload never falls back to layerwise; unsupported configs raise
+    from vllm.model_executor.model_loader.reload.hooks import (
+        HookReloadUnsupportedError,
+    )
+
     calls = []
     import vllm.model_executor.model_loader.reload.inplace as inplace
     import vllm.model_executor.model_loader.reload.layerwise as layerwise
@@ -325,9 +330,31 @@ def test_fp8_unsupported_backend_falls_back(monkeypatch):
     model = FakeFp8Model(qm)
     install_hook_reload_observers(model)
     model.load_weights(list(make_fp8_checkpoint(1).items()))
-    inplace.initialize_reload(model, FP8_MODEL_CONFIG, quant_config=FP8_QUANT_CONFIG)
-    assert calls == ["layerwise"]
+    with pytest.raises(HookReloadUnsupportedError):
+        inplace.initialize_reload(
+            model, FP8_MODEL_CONFIG, quant_config=FP8_QUANT_CONFIG
+        )
+    assert calls == []  # layerwise was not invoked
     assert not reload_used_hooks(model)
+
+
+def test_quantized_gate_raises_not_falls_back():
+    from vllm.model_executor.model_loader.reload.hooks import (
+        HookReloadUnsupportedError,
+    )
+
+    model = FakeFp8Model(FakeQuantMethod())
+    install_hook_reload_observers(model)
+    model.load_weights(list(make_fp8_checkpoint(1).items()))
+    # per-tensor fp8 (no block size): unsupported on the hook path
+    with pytest.raises(HookReloadUnsupportedError):
+        initialize_reload(
+            model,
+            FP8_MODEL_CONFIG,
+            quant_config=SimpleNamespace(
+                weight_block_size=None, is_checkpoint_fp8_serialized=True
+            ),
+        )
 
 
 def test_supports_hook_reload_gates():
