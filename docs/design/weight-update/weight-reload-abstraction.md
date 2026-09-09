@@ -134,7 +134,7 @@ staging 副本。
    的模型 reload 显存增量为 0。
 4. 空 reload（无新数据）调用 FINISH 是无副作用 no-op。
 
-## 6. Hook 模型：每个权重绑定 pre_reload / post_reload
+## 6. Hook 模型：每个权重绑定 pre_reload / post_load / finish_load
 
 ### 6.1 概念
 
@@ -142,15 +142,19 @@ staging 副本。
   - `pre_reload`：该权重的**第一个分片到达时**调用一次。职责由量化方法/
     后端自定义：记录 cold-load 元数据、分配 CONVERT buffer（仅当需要
     转换时）、做落点与布局的预校验。
-  - `post_reload`：**满足完成条件后**调用一次。完成条件按量化方式与
+  - `post_load`：**每个分片写入后**调用一次，默认空实现。逐分片的写入与
+    登记已经在 load_weight 中完成，此钩子仅为量化后端预留增量处理扩展点；
+    当前设计把所有修正推迟到完成时，不为省延迟做逐分片转换。
+  - `finish_load`：**满足完成条件后**调用一次。完成条件按量化方式与
     后端不同而不同（dense per-tensor：全部分片到齐；CUTLASS block-wise
     MoE：全部 expert/row/column 覆盖位图填满）。职责：执行转换并把结果
-    `copy_` 进 runtime storage、刷新派生 slot（alpha、reciprocal scale）、
-    释放 CONVERT buffer。
+    `copy_` 进 runtime storage、scale clamp / backend repack、刷新派生
+    slot（alpha、reciprocal scale）、释放 CONVERT buffer、完成性校验。
+    凡是依赖"权重完整"的操作一律放这里，不允许放进 post_load 逐分片执行。
 - `start_reload` 在任何分片到达之前调用：进入 reload 状态，遍历计划
   集合把每个权重的两个 hook 装载到 reload 上下文；此时尚未有任何
   数据写入运行时 storage。
-- IN_PLACE 权重的 `pre_reload` 只做校验（零分配），`post_reload` 退化为
+- IN_PLACE 权重的 `pre_reload` 只做校验（零分配），`finish_load` 退化为
   直接 `copy_`——"原地拷贝优先"通过 hook 实现自然落地。
 
 ### 6.2 时序图
@@ -162,7 +166,7 @@ sequenceDiagram
     participant W as 权重 slot (per weight)
     participant RT as 运行时 storage / kernel
 
-    Note over Ctx: start_reload(): 激活 reload 状态<br/>装载所有权重的 pre_reload / post_reload
+    Note over Ctx: start_reload(): 激活 reload 状态<br/>装载所有权重的 pre_reload / post_load / finish_load
     loop 每个到达的分片 shard_i
         Engine->>Ctx: deliver(weight_name, shard)
         alt 该权重首个分片
@@ -170,15 +174,16 @@ sequenceDiagram
             Note right of W: 记录元数据 / 预校验<br/>需要转换才分配 CONVERT buffer
         end
         Ctx->>W: 写入分片 (CONVERT buffer 或记录 in-place 计划)
+        Ctx->>W: post_load() (默认空实现)
         Note over Ctx,W: 覆盖位图 / 分片计数 更新
         alt 完成条件满足 (按量化/后端定义)
-            Ctx->>W: post_reload()
+            Ctx->>W: finish_load()
             W->>RT: 转换 + copy_ 原地写入 (指针不变)
             W->>RT: 刷新派生 slot (alpha 等, copy_)
             Note right of W: 释放 CONVERT buffer
         end
     end
-    Note over Ctx: FINISH: 所有权重 post_reload 完成 → reload 生效<br/>缺/重/错：写前可检 → 拒绝且 runtime 完整；<br/>写后发现 → 硬报错，引擎状态未定义，终止服务
+    Note over Ctx: FINISH: 所有权重 finish_load 完成 → reload 生效<br/>缺/重/错：写前可检 → 拒绝且 runtime 完整；<br/>写后发现 → 硬报错，引擎状态未定义，终止服务
 ```
 
 ### 6.3 单权重状态机
@@ -189,7 +194,7 @@ stateDiagram-v2
     IDLE --> ARMED: start_reload() 装载 hooks
     ARMED --> RECEIVING: 收到首个分片 → pre_reload()
     RECEIVING --> RECEIVING: 后续分片 (更新覆盖位图)
-    RECEIVING --> COMMITTED: 完成条件满足 → post_reload()\n转换 + copy_ + 刷新派生 + 释放 buffer
+    RECEIVING --> COMMITTED: 完成条件满足 → finish_load()\n转换 + copy_ + 刷新派生 + 释放 buffer
     RECEIVING --> REJECTED: 写前可检错误 (布局/重复/对齐)
     RECEIVING --> FAILED: 缺分片 / 传输中途失败 (写后发现)
     COMMITTED --> [*]: reload 生效 (指针不变)
@@ -199,7 +204,7 @@ stateDiagram-v2
 
 ### 6.4 不同后端的完成条件与 hook 行为
 
-| 后端 | 完成条件 (触发 post_reload) | pre_reload | post_reload |
+| 后端 | 完成条件 (触发 finish_load) | pre_reload | finish_load |
 | --- | --- | --- | --- |
 | FP8 dense per-tensor | 该张量全部分片到齐 | 仅校验 shape/dtype，零分配 | 直接 `copy_` 进 runtime storage (IN_PLACE) |
 | CUTLASS FP8 MoE (per-tensor scale) | 全部本地 expert 的 w13/w2 + scale 覆盖位图填满 | 校验 expert 元数据，分配 CONVERT buffer | requant + gate/up 交换 + padding 后 `copy_`，刷新 alpha/reciprocal |
@@ -215,7 +220,7 @@ stateDiagram-v2
 
 ### 7.1 情况分类
 
-| # | 情况 | 例子 | pre_reload | load_weight | post_reload | 完成条件 |
+| # | 情况 | 例子 | pre_reload | load_weight | finish_load | 完成条件 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 普通密集权重，无融合无切分 | RMSNorm weight、o_proj(单分片到达) | 空实现 | `runtime.copy_(shard)` | 空实现 | 单分片到达即完成 |
 | 2 | 行/列融合权重（多逻辑分片写一个张量） | merged QKV（q/k/v 三个 shard_id）、dense MLP gate_up（gate/up 两个 shard_id） | 记录各逻辑分片的行偏移与期望形状 | 按 shard_id 算行偏移，写入对应行区间，登记该 shard_id 已到达 | 空实现（可选：校验） | 全部 shard_id 到齐 |
@@ -237,7 +242,7 @@ stateDiagram-v2
   这正面回答了"w13 需要同时记录 w1 和 w3 到达情况"的需求；
 - 每个槽位记录：期望形状、运行时偏移（行区间或 expert 区间）、是否已写。
 
-post_reload 的完成条件统一为"到达表填满"，不同情况只是表的形状不同。
+finish_load 的完成条件统一为"到达表填满"，不同情况只是表的形状不同。
 重复到达同一槽位、未知 expert_id、偏移越界都在写入前拒绝。
 
 **偏移计算规则。** 融合权重统一用"逻辑分片 → 运行时行区间"映射：
@@ -255,8 +260,8 @@ FINISH 判出缺失时不存在旧权重可回退，引擎状态未定义，只�
 staging + FINISH 时一次性 copy_，本设计在 hook 层不排除该策略，但默认
 不启用（目标 3：能原地就原地）。
 
-**重复与幂等。** 空到达（无分片）时 post_reload 不触发、FINISH 为 no-op；
-同一 reload 内 post_reload 只执行一次，重复 FINISH 安全。
+**重复与幂等。** 空到达（无分片）时 finish_load 不触发、FINISH 为 no-op；
+同一 reload 内 finish_load 只执行一次，重复 FINISH 安全。
 
 ## 8. 离线量化 FP8 per-block 的 hook 设计
 
@@ -268,11 +273,11 @@ staging + FINISH 时一次性 copy_，本设计在 hook 层不排除该策略，
 两条设计修正贯穿全表：其一，默认**写入时映射**（pre_reload 只恢复
 layout 映射，load 按映射 copy_ 到 runtime 偏移），物理逆变换降级为
 非视图 layout 的后备；其二，clamp 等逐元素修正不进 load，推迟到
-post_reload 对整张小 scale 张量一次完成。
+finish_load 对整张小 scale 张量一次完成。
 
 ### 8.1 hook 分工总表
 
-| # | 情况 | 例子 | pre_reload | load_weight | post_reload | 完成条件 |
+| # | 情况 | 例子 | pre_reload | load_weight | finish_load | 完成条件 |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 非 MoE 权重本体 | 任意线性层 FP8 weight | 恢复 layout 映射（通常恒等），校验分片元数据 | 按映射 `copy_` 到 runtime 偏移，登记到达 | 空实现 | 权重分片到齐 |
 | 2 | 非 MoE block scale | weight_scale_inv | 恢复 block 行列交换映射 + padding 边界，校验分片元数据 | 按映射 `copy_`（行列交换作用于此），padding 区裁剪，登记到达 | refresh_derived_state：scale clamp、backend repack（若有）、派生 slot 刷新 | scale 分片到齐 |
@@ -296,4 +301,4 @@ post_reload 对整张小 scale 张量一次完成。
 | --- | --- | --- | --- |
 | 写入时映射（默认，#1–#8） | pre_reload 元数据/对齐校验失败：runtime 未被触碰，旧权重完整 | 缺分片/重复/中途失败：到达表不满时已发生部分原地写，无旧权重可回退，引擎状态未定义 | 硬报错并终止服务（重启或 cold load），不允许带病继续推理 |
 | 物理逆变换（后备，#9） | 全部校验前移到逆变换之前 | 逆变换一旦发生旧 layout 即不存在，任何后续失败不可恢复 | 逆变换到正变换之间视为原子临界区（推理静默的强形式） |
-| 公共语义 | FINISH：到达表填满 → post_reload → 生效 | 空到达 → no-op；缺/重/错一律硬报错 | 不变 |
+| 公共语义 | FINISH：到达表填满 → finish_load → 生效 | 空到达 → no-op；缺/重/错一律硬报错 | 不变 |

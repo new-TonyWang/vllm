@@ -76,8 +76,9 @@ from vllm.model_executor.layers.rotary_embedding import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.model_executor.model_loader.reload import (
-    finalize_layerwise_reload,
-    initialize_layerwise_reload,
+    finalize_reload,
+    initialize_reload,
+    reload_used_hooks,
 )
 from vllm.model_executor.models.interfaces import (
     MixtureOfExperts,
@@ -5652,10 +5653,15 @@ class GPUModelRunner(
         # begin loading weights
         logger.info_once("Reloading weights inplace...")
         if is_checkpoint_format:
-            # load weights from checkpoint/ original model format
-            initialize_layerwise_reload(model)
+            # load weights from checkpoint/ original model format;
+            # non-quantized models reload through in-place hooks
+            initialize_reload(
+                model,
+                self.model_config,
+                lora_enabled=self.lora_config is not None,
+            )
             loaded_weights = model.load_weights(weights_iterator)
-            finalize_layerwise_reload(model, self.model_config)
+            finalize_reload(model, self.model_config)
 
         else:
             # load weights from kernel format
@@ -5678,7 +5684,15 @@ class GPUModelRunner(
             "Reloading and processing weights took %.2f seconds",
             diff_seconds,
         )
-        if self.model_config.quantization is None and loaded_weights is not None:
+        if (
+            self.model_config.quantization is None
+            and loaded_weights is not None
+            # Hook reloads enforce per-shard completeness via ReloadIncomplete;
+            # the set difference below compares runtime parameter names with
+            # checkpoint shard names and false-positives on fused (e.g. MoE)
+            # parameters, so it only applies to the layerwise path.
+            and not reload_used_hooks(model)
+        ):
             weights_not_loaded = weights_to_load - loaded_weights
             if weights_not_loaded:
                 logger.warning(

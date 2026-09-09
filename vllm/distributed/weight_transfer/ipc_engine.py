@@ -160,20 +160,20 @@ class IPCWeightTransferEngine(
         self.packed = init_info.packed
 
     def start_weight_update(self) -> None:
-        """Initialize layerwise reloading for the incoming checkpoint weights."""
-        from vllm.model_executor.model_loader.reload import (
-            initialize_layerwise_reload,
-        )
+        """Enter a reload round (in-place hooks for non-quantized models)."""
+        from vllm.model_executor.model_loader.reload import initialize_reload
 
-        initialize_layerwise_reload(self.model)
+        initialize_reload(
+            self.model,
+            self.model_config,
+            lora_enabled=self.vllm_config.lora_config is not None,
+        )
 
     def finish_weight_update(self) -> None:
-        """Finalize layerwise reloading after all weights have been received."""
-        from vllm.model_executor.model_loader.reload import (
-            finalize_layerwise_reload,
-        )
+        """Complete the reload round after all weights have been received."""
+        from vllm.model_executor.model_loader.reload import finalize_reload
 
-        finalize_layerwise_reload(self.model, self.model_config)
+        finalize_reload(self.model, self.model_config)
         # Every reduce_tensor call is a fresh export with its own refcount
         # slot, so releasing once per update always balances this update's
         # export and lets the trainer reclaim its staging buffer. Callers

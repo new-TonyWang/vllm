@@ -21,6 +21,7 @@ from vllm.model_executor.layers.quantization.base_config import (
     QuantizeMethodBase,
 )
 from vllm.model_executor.model_loader.reload import (
+    install_hook_reload_observers,
     record_metadata_for_reloading,
     set_torchao_reload_attrs,
 )
@@ -58,6 +59,7 @@ def initialize_model(
         with set_current_vllm_config(vllm_config, check_compile=True, prefix=prefix):
             model = model_class(vllm_config=vllm_config, prefix=prefix)
             record_metadata_for_reloading(model)
+            install_hook_reload_observers(model)
             return model
 
     msg = (
@@ -90,6 +92,7 @@ def initialize_model(
     with set_current_vllm_config(vllm_config, check_compile=True, prefix=prefix):
         model = model_class(**kwargs)
         record_metadata_for_reloading(model)
+        install_hook_reload_observers(model)
 
     return model
 
