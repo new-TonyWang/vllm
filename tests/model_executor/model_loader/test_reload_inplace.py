@@ -36,8 +36,10 @@ def dense_loader(param: torch.Tensor, loaded_weight: torch.Tensor) -> None:
 
 
 def make_merged_loader(shard_rows: dict[str, tuple[int, int]]):
-    def merged_loader(param, loaded_weight, shard_id):
-        start, rows = shard_rows[shard_id]
+    # mirrors vLLM's QKVParallelLinear/MergedColumnParallelLinear signature,
+    # which names the shard argument `loaded_shard_id`, not `shard_id`
+    def merged_loader(param, loaded_weight, loaded_shard_id):
+        start, rows = shard_rows[loaded_shard_id]
         param.data[start : start + rows].copy_(loaded_weight)
 
     return merged_loader
@@ -79,6 +81,9 @@ class FakeVllmModel(torch.nn.Module):
         self.w13.weight_loader = moe_w13_loader
         self.w2 = torch.nn.Parameter(torch.zeros(E, K_MOE, N_MOE))
         self.w2.weight_loader = moe_w2_loader
+        # buffers can be load targets too (e.g. attention scales)
+        self.register_buffer("k_scale", torch.ones(1))
+        self.k_scale.weight_loader = dense_loader
 
     def load_weights(self, weights):
         loaded = set()
@@ -88,15 +93,20 @@ class FakeVllmModel(torch.nn.Module):
                 loaded.add("embed")
             elif name.endswith(("q_proj.weight", "k_proj.weight", "v_proj.weight")):
                 shard_id = name.split(".")[-2][0]  # q / k / v
-                self.qkv.weight_loader(self.qkv, w, shard_id)
+                self.qkv.weight_loader(self.qkv, w, loaded_shard_id=shard_id)
                 loaded.add("qkv")
             elif name.endswith(("gate_proj.weight", "up_proj.weight")):
                 shard_id = "gate" if "gate" in name else "up"
-                self.gate_up.weight_loader(self.gate_up, w, shard_id)
+                self.gate_up.weight_loader(
+                    self.gate_up, w, loaded_shard_id=shard_id
+                )
                 loaded.add("gate_up")
             elif name == "norm.weight":
                 self.norm.weight_loader(self.norm, w)
                 loaded.add("norm")
+            elif name == "k_scale":
+                self.k_scale.weight_loader(self.k_scale, w)
+                loaded.add("k_scale")
             elif ".w1." in name or ".w3." in name:
                 expert_id = int(name.split(".")[1])
                 shard_id = "w1" if ".w1." in name else "w3"
@@ -122,6 +132,7 @@ def make_checkpoint(seed: int) -> dict[str, torch.Tensor]:
         "gate_proj.weight": rnd(I, H),
         "up_proj.weight": rnd(I, H),
         "norm.weight": rnd(H),
+        "k_scale": rnd(1),
     }
     for e in range(E):
         ckpt[f"experts.{e}.w1.weight"] = rnd(N_MOE, K_MOE)
@@ -140,7 +151,8 @@ def _reference_model(ckpt) -> FakeVllmModel:
 
 
 def _assert_equal(a: FakeVllmModel, b: FakeVllmModel) -> None:
-    for (n1, p1), (n2, p2) in zip(a.named_parameters(), b.named_parameters()):
+    params = lambda m: list(m.named_parameters()) + list(m.named_buffers())
+    for (n1, p1), (n2, p2) in zip(params(a), params(b)):
         assert n1 == n2
         torch.testing.assert_close(p1, p2, rtol=0, atol=0)
 
@@ -235,3 +247,58 @@ def test_reload_used_hooks_flag():
     finalize_reload(model, NONQUANT)
     # hook path handled the round: callers must skip legacy name-set warnings
     assert reload_used_hooks(model)
+
+
+def test_hook_reload_tracks_buffers():
+    model = FakeVllmModel()
+    install_hook_reload_observers(model)
+    model.load_weights(list(make_checkpoint(1).items()))
+    ptr_before = model.k_scale.data_ptr()
+
+    initialize_reload(model, NONQUANT)
+    model.load_weights(list(make_checkpoint(2).items()))
+    finalize_reload(model, NONQUANT)
+
+    reference = _reference_model(make_checkpoint(2))
+    torch.testing.assert_close(model.k_scale, reference.k_scale, rtol=0, atol=0)
+    assert model.k_scale.data_ptr() == ptr_before
+    # the buffer was observed and is hook-tracked, not silently bypassed
+    assert reload_used_hooks(model)
+
+
+def test_hook_reload_missing_buffer_shard_raises_incomplete():
+    model = FakeVllmModel()
+    install_hook_reload_observers(model)
+    model.load_weights(list(make_checkpoint(1).items()))
+
+    ckpt_b = make_checkpoint(2)
+    ckpt_b.pop("k_scale")
+    initialize_reload(model, NONQUANT)
+    model.load_weights(list(ckpt_b.items()))
+    with pytest.raises(ReloadIncomplete, match="k_scale"):
+        finalize_reload(model, NONQUANT)
+
+
+def test_merged_qkv_shards_tracked_not_degraded():
+    # Regression: linear loaders name the shard argument `loaded_shard_id`;
+    # missing it collapsed q/k/v into one key and degraded the parameter
+    from vllm.model_executor.model_loader.reload.inplace import _PLANS
+
+    model = FakeVllmModel()
+    install_hook_reload_observers(model)
+    model.load_weights(list(make_checkpoint(1).items()))
+
+    plan = _PLANS[model]
+    qkv = plan.records["qkv"]
+    assert qkv.expected is not None, "merged QKV must stay tracked"
+    assert set(qkv.expected) == {("q", None), ("k", None), ("v", None)}
+    gate_up = plan.records["gate_up"]
+    assert gate_up.expected is not None
+    assert set(gate_up.expected) == {("gate", None), ("up", None)}
+
+    initialize_reload(model, NONQUANT)
+    assert qkv.hook is not None
+    assert gate_up.hook is not None
+    model.load_weights(list(make_checkpoint(2).items()))
+    finalize_reload(model, NONQUANT)
+    _assert_equal(model, _reference_model(make_checkpoint(2)))

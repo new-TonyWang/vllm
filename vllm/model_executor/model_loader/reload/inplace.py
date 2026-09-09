@@ -51,6 +51,7 @@ from .hooks import (
     WeightReloadHook,
     WeightShard,
 )
+from .meta import SKIP_LOAD_TENSORS
 
 if TYPE_CHECKING:
     from vllm.config import ModelConfig
@@ -68,9 +69,18 @@ _FULL = "full"
 
 
 def _shard_key(bound_args: inspect.BoundArguments) -> Hashable:
-    """Shard identity from loader arguments: (shard_id, expert_id)."""
-    shard_id = bound_args.arguments.get("shard_id")
-    expert_id = bound_args.arguments.get("expert_id")
+    """Shard identity from loader arguments: (shard_id, expert_id).
+
+    Loader argument names differ across layer types: fused MoE loaders use
+    ``shard_id``/``expert_id`` while the linear layers
+    (``QKVParallelLinear``, ``MergedColumnParallelLinear``) use
+    ``loaded_shard_id``. Both name the same concept; check both.
+    """
+    arguments = bound_args.arguments
+    shard_id = arguments.get("shard_id")
+    if shard_id is None:
+        shard_id = arguments.get("loaded_shard_id")
+    expert_id = arguments.get("expert_id")
     if shard_id is None and expert_id is None:
         return _FULL
     return (
@@ -156,7 +166,16 @@ def install_hook_reload_observers(model: torch.nn.Module) -> None:
     plan = _ModelHookPlan()
     _PLANS[model] = plan
     model_ref = ref(model)
-    for name, param in model.named_parameters():
+    # Buffers are load targets too (e.g. attention k_scale/v_scale with their
+    # own weight_loader); skip buffers that are never loaded from checkpoints,
+    # matching the layerwise path's SKIP_LOAD_TENSORS.
+    tensors = list(model.named_parameters())
+    tensors += [
+        (name, buffer)
+        for name, buffer in model.named_buffers()
+        if name.rsplit(".", 1)[-1] not in SKIP_LOAD_TENSORS
+    ]
+    for name, param in tensors:
         original_loader = getattr(param, "weight_loader", None)
         if original_loader is None:
             from vllm.model_executor.model_loader.weight_utils import (
