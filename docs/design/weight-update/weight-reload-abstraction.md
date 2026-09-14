@@ -412,6 +412,101 @@ and derived outputs generated successfully
 “child complete -> parent notified”通知机制。不要依赖 Python 模块遍历顺序
 来隐式决定派生权重的执行顺序。
 
+不同层级 tracer 的关系可以表示为下面的图。实线表示 ownership tree：
+父模块拥有子模块 tracer；虚线表示 dependency edge：目标 tracer 的
+`finish` 依赖源 tracer 的完成。图中的 `MLAAttentionTracer` 和
+`QuantizedLinearTracer` 可能不在同一条模块父子路径上，但它们可以通过
+依赖边参与同一个派生权重计算。
+
+```mermaid
+flowchart TD
+    Model["ModelTracer<br/>模型级 round 状态"]
+    Layer["DecoderLayerTracer<br/>层级聚合"]
+    Attn["MLAAttentionTracer<br/>注意力派生权重"]
+    MLP["MLPTracer<br/>MLP 聚合"]
+    Dense["DenseLinearTracer<br/>普通线性层"]
+    QKV["QKVLinearTracer<br/>融合 QKV"]
+    Routed["RoutedExpertsTracer<br/>专家映射与分片"]
+    W1["ExpertW1Tracer<br/>w1 slots"]
+    W3["ExpertW3Tracer<br/>w3 slots"]
+    W2["ExpertW2Tracer<br/>w2 slots"]
+    QWeight["QuantizedWeightState<br/>weight slots"]
+    QScale["QuantizedScaleState<br/>scale slots"]
+    Derived["DerivedStateTracer<br/>repack / requant / refresh"]
+    UV["Derived W_UV"]
+    UK["Derived W_UK"]
+
+    Model --> Layer
+    Layer --> Attn
+    Layer --> MLP
+    Attn --> QKV
+    MLP --> Dense
+    MLP --> Routed
+    Routed --> W1
+    Routed --> W3
+    Routed --> W2
+    QKV --> QWeight
+    QKV --> QScale
+    W1 --> QWeight
+    W3 --> QWeight
+    W2 --> QWeight
+    QWeight --> Derived
+    QScale --> Derived
+
+    QKV -. "complete" .-> Attn
+    QScale -. "complete" .-> Attn
+    Dense -. "complete" .-> Attn
+    W1 -. "complete" .-> Attn
+    W3 -. "complete" .-> Attn
+    Derived -. "refresh" .-> Attn
+    Attn -. "finish" .-> UV
+    Attn -. "finish" .-> UK
+```
+
+上图中的 ownership tree 不是要求每个模型都具有完全相同的节点。实际
+builder 可以根据模块类型裁剪节点：
+
+| 层级 | 典型 tracer | 主要职责 | 完成依赖 |
+| --- | --- | --- | --- |
+| 模型级 | `ModelTracer` | 管理 reload round、汇总全局错误 | 所有参与本轮 reload 的 layer |
+| Layer 级 | `DecoderLayerTracer` | 聚合 attention、MLP、norm 等成员 | child tracer 的状态 |
+| 复合模块级 | `MLAAttentionTracer` | 感知成员权重并生成 `W_UV`、`W_UK` | QKV、输入投影、scale 和其它成员 |
+| 量化模块级 | `QuantizedLinearTracer` | 协调 weight、scale 和 backend 派生状态 | weight 与 scale slots |
+| MoE 模块级 | `RoutedExpertsTracer` | 根据 expert mapping 声明 local expert slots | 本 rank 所需 expert 的全部 shard |
+| 叶子分片级 | `ExpertW1Tracer` 等 | 记录一个角色的 expert/shard 到达位图 | 对应 logical/physical expert slots |
+| 派生状态级 | `DerivedStateTracer` | 执行 repack、requant 或 scale refresh | 所有输入 tracer 完成 |
+
+一个典型 decoder layer 的 finish 顺序如下：
+
+```mermaid
+sequenceDiagram
+    participant L as DecoderLayerTracer
+    participant A as MLAAttentionTracer
+    participant Q as QKV/Linear Tracers
+    participant E as RoutedExpertsTracer
+    participant D as DerivedStateTracer
+
+    Q->>Q: after_write(weight/scale)
+    E->>E: after_write(expert shard)
+    Q-->>A: child complete
+    E-->>L: child complete
+    A->>A: check own slots and dependencies
+    A->>D: finish derived state
+    D-->>A: W_UV/W_UK ready
+    A-->>L: attention complete
+    L->>L: aggregate all layer children
+```
+
+因此，finish 调度应遵循以下规则：
+
+1. 叶子 tracer 先完成自己的 slots；
+2. 量化 tracer 在 weight 和 scale 都完成后执行 backend finish；
+3. MoE tracer 在所有本 rank local expert 的 shard 都完成后上报；
+4. MLA 等复合 tracer 等待所有依赖节点完成，再生成派生权重；
+5. Layer tracer 最后聚合成员状态，并向 Model tracer 上报；
+6. 任一节点失败时，父节点不能报告 complete，必须沿 ownership path
+   汇总错误和 missing slots。
+
 ### 9.5 RoutedExperts 和 EPLB
 
 `RoutedExperts.load_weights()` 具有普通线性层 loader 不具备的全局视野：
