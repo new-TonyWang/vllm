@@ -18,8 +18,12 @@ runtime and the only differences are backend layouts:
   clamp is deferred to ``finish_load`` and applied to the whole scale
   tensor in place.
 
-UE8M0 requant (SM100) rewrites weights and is therefore unsupported here:
-such models fall back to the layerwise path.
+DeepGemm UE8M0 stages weight and scale together, requantizes them as a pair,
+and commits both results into the existing runtime storage.
+
+Marlin dense block-wise (weight repack + scale permute, both non-view) is
+implemented in :mod:`reload.marlin` with checkpoint-layout staging and
+conversion at finish_load.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from collections.abc import Callable
 
 import torch
 
-from .hooks import ReloadRejected, RuntimeSlot
+from .hooks import ArrivalTracker, HookState, ReloadRejected, RuntimeSlot
 from .inplace import LoaderWeightHook
 
 __all__ = [
@@ -37,6 +41,7 @@ __all__ = [
     "Fp8BlockClampHook",
     "Fp8MoeW31SwapHook",
     "DeepGemmScaleHook",
+    "DeepGemmUe8m0Hook",
 ]
 
 
@@ -206,3 +211,201 @@ class DeepGemmScaleHook(LoaderWeightHook):
             )
         self.slot.write(transformed)
         self._staging = None
+
+
+class DeepGemmUe8m0Hook(LoaderWeightHook):
+    """Reload hook for one DeepGemm UE8M0 weight/scale pair.
+
+    The hook is registered once in ``ReloadContext`` and receives loader
+    calls for both parameters.  Both tensors remain in checkpoint-layout
+    staging until their independent arrival tables are complete.
+    """
+
+    def __init__(
+        self,
+        *,
+        weight_slot: RuntimeSlot,
+        weight_loader: Callable,
+        weight_param: torch.Tensor,
+        weight_staging_shape: tuple[int, ...] | None = None,
+        weight_name: str,
+        scale_slot: RuntimeSlot,
+        scale_loader: Callable,
+        scale_param: torch.Tensor,
+        scale_staging_shape: tuple[int, ...] | None = None,
+        scale_name: str,
+        block_shape: tuple[int, int],
+        mn: int,
+        k: int,
+        num_groups: int = 1,
+        is_bmm: bool = False,
+        bmm_batch_size: int = 0,
+    ) -> None:
+        super().__init__(weight_slot, weight_loader)
+        self._weight_name = weight_name
+        self._scale_name = scale_name
+        self._scale_slot = scale_slot
+        self._scale_loader = scale_loader
+        self._scale_tracker = ArrivalTracker()
+        self.block_shape = block_shape
+        self.mn = mn
+        self.k = k
+        self.num_groups = num_groups
+        self.is_bmm = is_bmm
+        self.bmm_batch_size = bmm_batch_size
+        self._weight_param = weight_param
+        self._scale_param = scale_param
+        self._weight_staging_shape = weight_staging_shape or tuple(
+            weight_param.shape
+        )
+        self._scale_staging_shape = scale_staging_shape or tuple(
+            scale_param.shape
+        )
+        self._weight_staging: torch.Tensor | None = None
+        self._scale_staging: torch.Tensor | None = None
+
+    def arm(self) -> None:
+        super().arm()
+        self._scale_tracker.reset()
+
+    def add_slot(
+        self,
+        role: str,
+        key: object,
+        expected_shape: tuple[int, ...],
+    ) -> None:
+        tracker = self.tracker if role == "weight" else self._scale_tracker
+        tracker.add_slot(key, expected_shape)
+
+    def missing(self) -> dict[str, list[object]]:
+        return {
+            "weight": self.tracker.missing(),
+            "scale": self._scale_tracker.missing(),
+        }
+
+    def load_from_loader(
+        self,
+        bound_args: inspect.BoundArguments,
+        tensor_name: str | None = None,
+    ) -> object:
+        if tensor_name == self._weight_name:
+            role = "weight"
+            tracker = self.tracker
+            staging = self._weight_staging
+            loader = self._original_loader
+        elif tensor_name == self._scale_name:
+            role = "scale"
+            tracker = self._scale_tracker
+            staging = self._scale_staging
+            loader = self._scale_loader
+        else:
+            raise ReloadRejected(
+                f"UE8M0 hook {self.name!r} received unknown tensor "
+                f"{tensor_name!r}"
+            )
+
+        if self.state is HookState.IDLE:
+            raise ReloadRejected(
+                f"Shard for {self.name!r} arrived before start_reload"
+            )
+        if self.state is HookState.COMMITTED:
+            if self.allow_duplicate_after_commit:
+                return None
+            raise ReloadRejected(
+                f"Shard arrived after {self.name!r} committed"
+            )
+        if self.state is HookState.ARMED:
+            self.pre_reload()
+            self.state = HookState.RECEIVING
+
+        loaded = bound_args.arguments.get("loaded_weight")
+        if not isinstance(loaded, torch.Tensor):
+            raise ReloadRejected(
+                f"Loader for {tensor_name!r} received a non-tensor payload"
+            )
+        key = self._arrival_key(bound_args)
+        tracker.validate(key, loaded.shape)
+        if staging is None:
+            staging = (
+                self._weight_staging
+                if role == "weight"
+                else self._scale_staging
+            )
+        if staging is None:
+            raise ReloadRejected(
+                f"UE8M0 hook {self.name!r} has no {role} staging buffer"
+            )
+        bound_args.arguments["param"] = staging
+        result = loader(*bound_args.args, **bound_args.kwargs)
+        tracker.mark_arrived(key)
+        if self.tracker.complete and self._scale_tracker.complete:
+            self.finish_load()
+            self.slot.check_pointer_stability()
+            self._scale_slot.check_pointer_stability()
+            self.state = HookState.COMMITTED
+        return result
+
+    def pre_reload(self) -> None:
+        self._weight_staging = self._make_staging(
+            self._weight_staging_shape,
+            self._weight_param,
+            self._weight_param.dtype,
+        )
+        self._scale_staging = self._make_staging(
+            self._scale_staging_shape,
+            self._scale_param,
+            torch.float32,
+        )
+
+    @staticmethod
+    def _make_staging(
+        shape: tuple[int, ...],
+        template: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        staging = torch.nn.Parameter(
+            torch.empty(shape, dtype=dtype, device=template.device),
+            requires_grad=False,
+        )
+        if type(template) is not torch.nn.Parameter:
+            staging.__class__ = type(template)
+        for attr, value in template.__dict__.items():
+            staging.__dict__.setdefault(attr, value)
+        return staging
+
+    def finish_load(self) -> None:
+        if self._weight_staging is None or self._scale_staging is None:
+            raise RuntimeError(
+                f"UE8M0 hook {self.name!r} is missing staging buffers"
+            )
+
+        from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+            deepgemm_post_process_fp8_weight_block,
+        )
+
+        weight = self._weight_staging
+        scale = self._scale_staging
+        weight, scale = deepgemm_post_process_fp8_weight_block(
+            wq=weight,
+            ws=scale,
+            quant_block_shape=self.block_shape,
+            use_e8m0=True,
+            is_bmm=self.is_bmm,
+            bmm_batch_size=self.bmm_batch_size,
+        )
+        if tuple(weight.shape) != self.slot.shape:
+            raise RuntimeError(
+                f"DeepGemm UE8M0 weight transform for "
+                f"{self.name!r} produced {tuple(weight.shape)}, "
+                f"runtime slot is {self.slot.shape}"
+            )
+        if tuple(scale.shape) != self._scale_slot.shape:
+            raise RuntimeError(
+                f"DeepGemm UE8M0 scale transform for "
+                f"{self._scale_slot.name!r} produced {tuple(scale.shape)}, "
+                f"runtime slot is {self._scale_slot.shape}"
+            )
+        self.slot.write(weight)
+        self._scale_slot.write(scale)
+        self._weight_staging = None
+        self._scale_staging = None

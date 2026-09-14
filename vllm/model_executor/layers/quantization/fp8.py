@@ -443,16 +443,70 @@ class Fp8LinearMethod(LinearMethodBase):
         if not (self.block_quant and self.quant_config.is_checkpoint_fp8_serialized):
             return False
         if getattr(self, "use_marlin", False):
-            return False
+            # Marlin uses a checkpoint-layout staging buffer and repacks into
+            # the cold-load runtime storage during finish_load.
+            return True
         kernel = getattr(self, "fp8_linear", None)
         if kernel is None:
             return False
         name = type(kernel).__name__
         if name in _FP8_BLOCK_HOOK_DEEPGEMM_KERNELS:
-            # UE8M0 requantizes the weights themselves; hook path keeps
-            # weight writes in place, so fall back to the layerwise path.
-            return not getattr(kernel, "use_deep_gemm_e8m0", False)
+            return True
         return name in _FP8_BLOCK_HOOK_IDENTITY_KERNELS
+
+    def make_reload_hook_groups(
+        self, layer, slots, loaders, cold_params, names
+    ):
+        """Build one hook for the DeepGemm UE8M0 weight/scale pair."""
+        kernel = getattr(self, "fp8_linear", None)
+        if not getattr(kernel, "use_deep_gemm_e8m0", False):
+            return None
+        from vllm.model_executor.model_loader.reload.fp8_block import (
+            DeepGemmUe8m0Hook,
+        )
+
+        assert self.weight_block_size is not None
+        if {"weight", "weight_scale_inv"} - set(slots):
+            return None
+        weight = layer.weight
+        block_n, block_k = self.weight_block_size
+        is_bmm = getattr(layer, "is_bmm", False)
+        if is_bmm:
+            weight_staging_shape = (
+                weight.shape[0] * weight.shape[1],
+                weight.shape[2],
+            )
+            scale_staging_shape = (
+                weight_staging_shape[0] // block_n,
+                weight_staging_shape[1] // block_k,
+            )
+        else:
+            weight_staging_shape = tuple(weight.shape)
+            scale_staging_shape = (
+                (weight.shape[-2] + block_n - 1) // block_n,
+                (weight.shape[-1] + block_k - 1) // block_k,
+            )
+        hook = DeepGemmUe8m0Hook(
+            weight_slot=slots["weight"],
+            weight_loader=loaders["weight"],
+            weight_param=cold_params["weight"],
+            weight_staging_shape=weight_staging_shape,
+            weight_name=names["weight"],
+            scale_slot=slots["weight_scale_inv"],
+            scale_loader=loaders["weight_scale_inv"],
+            scale_param=cold_params["weight_scale_inv"],
+            scale_staging_shape=scale_staging_shape,
+            scale_name=names["weight_scale_inv"],
+            block_shape=(block_n, block_k),
+            mn=weight.shape[-2],
+            k=weight.shape[-1],
+            is_bmm=is_bmm,
+            bmm_batch_size=getattr(layer, "bmm_batch_size", 0),
+        )
+        return {
+            "weight": hook,
+            "weight_scale_inv": hook,
+        }
 
     def make_reload_hook(
         self, layer, param_name, slot, original_loader, cold_param=None
@@ -464,6 +518,43 @@ class Fp8LinearMethod(LinearMethodBase):
         )
 
         kernel = getattr(self, "fp8_linear", None)
+        if getattr(kernel, "use_deep_gemm_e8m0", False):
+            return None
+        if self.use_marlin:
+            from vllm.model_executor.model_loader.reload.marlin import (
+                MarlinFp8ScaleHook,
+                MarlinFp8WeightHook,
+            )
+
+            assert self.weight_block_size is not None
+            if param_name == "bias":
+                # marlin permutes bias at load; not hook-supported yet
+                return None
+            size_k = layer.input_size_per_partition
+            size_n = layer.output_size_per_partition
+            block_size = self.weight_block_size
+            size_k_first = self.fp8_linear.size_k_first
+            if param_name == "weight":
+                return MarlinFp8WeightHook(
+                    slot,
+                    original_loader,
+                    cold_param,
+                    size_k=size_k,
+                    size_n=size_n,
+                    size_k_first=size_k_first,
+                    group_size=block_size[1],
+                )
+            if param_name == "weight_scale_inv":
+                return MarlinFp8ScaleHook(
+                    slot,
+                    original_loader,
+                    cold_param,
+                    size_k=size_k,
+                    size_n=size_n,
+                    size_k_first=size_k_first,
+                    block_size=block_size,
+                    input_dtype=self.marlin_input_dtype,
+                )
         deepgemm = type(kernel).__name__ in _FP8_BLOCK_HOOK_DEEPGEMM_KERNELS
         if param_name == "weight_scale_inv" and deepgemm:
             assert self.weight_block_size is not None
@@ -1026,8 +1117,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             from vllm.utils.deep_gemm import is_deep_gemm_e8m0_used
 
             if is_deep_gemm_e8m0_used():
-                # UE8M0 requantizes weights in place; not hook-supported
-                return False
+                return True
         return self.fp8_backend in (
             Fp8MoeBackend.TRITON,
             Fp8MoeBackend.BATCHED_TRITON,
@@ -1035,6 +1125,57 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             Fp8MoeBackend.BATCHED_DEEPGEMM,
             Fp8MoeBackend.FLASHINFER_CUTLASS,
         )
+
+    def make_reload_hook_groups(
+        self, layer, slots, loaders, cold_params, names
+    ):
+        """Build one hook per DeepGemm UE8M0 MoE weight/scale pair."""
+        deepgemm = self.fp8_backend in (
+            Fp8MoeBackend.DEEPGEMM,
+            Fp8MoeBackend.BATCHED_DEEPGEMM,
+        )
+        if not deepgemm:
+            return None
+        from vllm.utils.deep_gemm import is_deep_gemm_e8m0_used
+        from vllm.model_executor.model_loader.reload.fp8_block import (
+            DeepGemmUe8m0Hook,
+        )
+
+        if not is_deep_gemm_e8m0_used():
+            return None
+        assert self.weight_block_size is not None
+        block_n, block_k = self.weight_block_size
+        result = {}
+        for prefix, weight_name in (
+            ("w13", "w13_weight"),
+            ("w2", "w2_weight"),
+        ):
+            scale_name = f"{prefix}_{self.weight_scale_name}"
+            if {weight_name, scale_name} - set(slots):
+                return None
+            weight = getattr(layer, weight_name)
+            hook = DeepGemmUe8m0Hook(
+                weight_slot=slots[weight_name],
+                weight_loader=loaders[weight_name],
+                weight_param=cold_params[weight_name],
+                weight_name=names[weight_name],
+                scale_slot=slots[scale_name],
+                scale_loader=loaders[scale_name],
+                scale_param=cold_params[scale_name],
+                scale_staging_shape=(
+                    weight.shape[0],
+                    (weight.shape[-2] + block_n - 1) // block_n,
+                    (weight.shape[-1] + block_k - 1) // block_k,
+                ),
+                scale_name=names[scale_name],
+                block_shape=(block_n, block_k),
+                mn=weight.shape[-2],
+                k=weight.shape[-1],
+                num_groups=weight.shape[0],
+            )
+            result[weight_name] = hook
+            result[scale_name] = hook
+        return result
 
     def make_reload_hook(
         self, layer, param_name, slot, original_loader, cold_param=None
@@ -1055,6 +1196,11 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             Fp8MoeBackend.BATCHED_DEEPGEMM,
         )
         fi_cutlass = self.fp8_backend == Fp8MoeBackend.FLASHINFER_CUTLASS
+        if deepgemm:
+            from vllm.utils.deep_gemm import is_deep_gemm_e8m0_used
+
+            if is_deep_gemm_e8m0_used():
+                return None
         is_w13 = param_name.startswith("w13")
         is_scale = param_name.endswith(self.weight_scale_name)
 

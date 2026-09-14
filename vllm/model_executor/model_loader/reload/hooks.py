@@ -3,11 +3,10 @@
 """Core reload hook abstractions: slots, arrival tracking, reload context.
 
 Implements the hook model of docs/design/weight-update/
-weight-reload-abstraction.md section 6: every reloadable weight is a
-:class:`RuntimeSlot` with a :class:`WeightReloadHook` binding pre_reload /
-load_shard / finish_load. Quantized backends build CONVERT-buffer hooks
-on top of the same primitives; non-quantized hooks live in
-``nonquant_hooks``.
+weight-reload-abstraction.md section 6. Every reloadable weight is a
+:class:`RuntimeSlot` with a :class:`WeightReloadHook`. The wrapped vLLM
+weight loaders drive shard validation and writes; quantized backends add
+conversion buffers and finish-time processing on top of the same lifecycle.
 
 Failure semantics:
 - :class:`ReloadRejected`: raised by pre-write validation. Runtime storage
@@ -20,7 +19,6 @@ Failure semantics:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -31,7 +29,6 @@ __all__ = [
     "ReloadRejected",
     "ReloadIncomplete",
     "HookReloadUnsupportedError",
-    "WeightShard",
     "ArrivalTracker",
     "RuntimeSlot",
     "HookState",
@@ -55,25 +52,6 @@ class HookReloadUnsupportedError(RuntimeError):
     docs/design/weight-update/reload-hook-unsupported.md for the list of
     currently unsupported scenarios.
     """
-
-
-@dataclass(frozen=True)
-class WeightShard:
-    """One incoming piece of a weight delivered by the transfer engine.
-
-    Args:
-        name: checkpoint name of the target weight.
-        tensor: shard payload. May have a different dtype than the runtime
-            storage; ``copy_`` casts implicitly (not a conversion).
-        shard_id: logical shard within a fused weight, e.g. ``"q"``/``"k"``/
-            ``"v"`` for merged QKV or ``"w1"``/``"w3"`` for fused MoE w13.
-        expert_id: expert index within a fused MoE weight.
-    """
-
-    name: str
-    tensor: torch.Tensor
-    shard_id: str | None = None
-    expert_id: int | None = None
 
 
 @dataclass
@@ -250,18 +228,18 @@ class HookState(Enum):
     COMMITTED = auto()
 
 
-class WeightReloadHook(ABC):
+class WeightReloadHook:
     """Per-weight reload hook bound to one :class:`RuntimeSlot`.
 
-    Lifecycle: ``arm`` (start_reload) -> first shard triggers ``pre_reload``
-    -> each shard written via ``load_shard`` then ``post_load`` -> completion
-    triggers ``finish_load`` exactly once.
+    Lifecycle: ``arm`` (start_reload) -> first loader call triggers
+    ``pre_reload`` -> each loader call writes one shard and invokes
+    ``post_load`` -> completion triggers ``finish_load`` exactly once.
 
     - ``post_load`` runs after every individual shard write. It is a no-op
-      by default: per-shard work (offset-mapped ``copy_``, arrival
-      registration) already lives in ``_write_shard``. Quantized backends
-      may use it for incremental per-shard work, but the design defers all
-      fixups to completion.
+      by default: the wrapped loader or quantized hook performs the write and
+      arrival registration before invoking it. Quantized backends may use it
+      for incremental per-shard work, but the design defers all fixups to
+      completion.
     - ``finish_load`` runs once when the arrival table is full: convert +
       ``copy_`` into runtime storage, scale clamp/repack, refresh derived
       slots, free the CONVERT buffer. Non-quantized hooks write in place,
@@ -298,13 +276,6 @@ class WeightReloadHook(ABC):
             raise ReloadRejected(f"Hook {self.name!r} re-armed mid-reload")
         self.tracker.reset()
         self.state = HookState.ARMED
-
-    def load_shard(self, shard: WeightShard) -> None:
-        """Route one incoming shard; auto-commits when complete."""
-        if self._begin_shard(shard.name):
-            self._write_shard(shard)
-            self.post_load()
-            self._commit_if_complete()
 
     def _begin_shard(self, shard_label: str) -> bool:
         """Advance the state machine for an incoming shard.
@@ -345,18 +316,14 @@ class WeightReloadHook(ABC):
     def finish_load(self) -> None:
         """Completion hook: convert + copy_, refresh derived slots, free."""
 
-    @abstractmethod
-    def _write_shard(self, shard: WeightShard) -> None:
-        """Validate and route one shard into the slot (in place or buffer)."""
-
 
 class ReloadContext:
     """Lifecycle owner for one reload round across all registered hooks.
 
-    start_reload arms every hook; deliver routes shards by checkpoint name
-    (resolving tied-weight aliases); finish enforces the completeness
-    invariant: either nothing arrived (no-op) or every armed hook committed,
-    otherwise raise :class:`ReloadIncomplete`.
+    ``start_reload`` arms every hook. Wrapped vLLM weight loaders route each
+    observed checkpoint shard to its registered hook. ``finish`` enforces the
+    completeness invariant: either nothing arrived (no-op) or every armed
+    hook committed, otherwise raise :class:`ReloadIncomplete`.
     """
 
     def __init__(self) -> None:
@@ -399,13 +366,6 @@ class ReloadContext:
         for hook in self._hooks.values():
             hook.arm()
         self._active = True
-
-    def deliver(self, shard: WeightShard) -> None:
-        if not self._active:
-            raise ReloadRejected(
-                f"Shard {shard.name!r} delivered outside an active reload"
-            )
-        self.hook(shard.name).load_shard(shard)
 
     def finish(self) -> None:
         """Complete the reload. No-op if no shard arrived at all."""

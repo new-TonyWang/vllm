@@ -53,7 +53,6 @@ from .hooks import (
     ReloadRejected,
     RuntimeSlot,
     WeightReloadHook,
-    WeightShard,
 )
 from .meta import SKIP_LOAD_TENSORS
 
@@ -109,7 +108,11 @@ class LoaderWeightHook(WeightReloadHook):
         super().__init__(slot)
         self._original_loader = original_loader
 
-    def load_from_loader(self, bound_args: inspect.BoundArguments) -> Any:
+    def load_from_loader(
+        self,
+        bound_args: inspect.BoundArguments,
+        tensor_name: str | None = None,
+    ) -> Any:
         """Entry point for the wrapped weight loader."""
         key = self._arrival_key(bound_args)
         if not self._begin_shard(str(key)):
@@ -140,11 +143,6 @@ class LoaderWeightHook(WeightReloadHook):
         shard's target half, or substitute a staging buffer).
         """
         return bound_args
-
-    def _write_shard(self, shard: WeightShard) -> None:
-        raise NotImplementedError(
-            "LoaderWeightHook is driven through load_from_loader"
-        )
 
 
 @dataclass
@@ -231,7 +229,7 @@ def _make_observer_wrapper(
             return original_loader(*args, **kwargs)
         if plan.active and record.hook is not None:
             # reload round: route through the hook (validates + delegates)
-            return record.hook.load_from_loader(bound)
+            return record.hook.load_from_loader(bound, record.name)
         if not plan.frozen:
             _observe_write(record, bound)
         return original_loader(*args, **kwargs)
@@ -402,6 +400,7 @@ def _build_hook_context(
             makers[record.name] = (quant_method, module, local_name)
 
     ctx = ReloadContext()
+    slots: dict[str, RuntimeSlot] = {}
     for record in plan.records.values():
         if not record.expected:
             continue
@@ -410,23 +409,92 @@ def _build_hook_context(
         except (RuntimeError, ValueError):
             record.expected = None  # no stable row view; stop tracking
             continue
+        slots[record.name] = slot
+
+    grouped_hooks: dict[str, WeightReloadHook] = {}
+    hook_groups: dict[tuple[str, int], dict[str, Any]] = {}
+    for record in plan.records.values():
+        if record.name not in slots or record.name not in makers:
+            continue
+        quant_method, module, local_name = makers[record.name]
+        group_factory = getattr(quant_method, "make_reload_hook_groups", None)
+        if not callable(group_factory):
+            continue
+        module_key = (record.name.rsplit(".", 1)[0], id(quant_method))
+        group = hook_groups.setdefault(
+            module_key,
+            {"method": quant_method, "module": module, "names": {}},
+        )
+        group["names"][local_name] = record.name
+
+    for group in hook_groups.values():
+        names = group["names"]
+        group_slots = {
+            local: slots[name]
+            for local, name in names.items()
+            if name in slots
+        }
+        group_loaders = {
+            local: plan.records[name].original_loader
+            for local, name in names.items()
+            if name in slots
+        }
+        group_params = {
+            local: plan.records[name].param
+            for local, name in names.items()
+            if name in slots
+        }
+        if set(group_slots) != set(names):
+            continue
+        made = group["method"].make_reload_hook_groups(
+            group["module"],
+            group_slots,
+            group_loaders,
+            group_params,
+            names,
+        )
+        if made is not None:
+            for local, hook in made.items():
+                grouped_hooks[names[local]] = hook
+
+    registered: set[int] = set()
+    for record in plan.records.values():
+        if record.name not in slots:
+            continue
+        slot = slots[record.name]
         if record.name in makers:
             quant_method, module, local_name = makers[record.name]
-            hook = quant_method.make_reload_hook(
-                module,
-                local_name,
-                slot,
-                record.original_loader,
-                cold_param=record.param,
-            )
+            hook = grouped_hooks.get(record.name)
+            if hook is None:
+                hook = quant_method.make_reload_hook(
+                    module,
+                    local_name,
+                    slot,
+                    record.original_loader,
+                    cold_param=record.param,
+                )
             if hook is None:
                 return None
         else:
             hook = LoaderWeightHook(slot, record.original_loader)
         for key, shape in record.expected.items():
-            hook.tracker.add_slot(key, shape)
+            if hook is grouped_hooks.get(record.name):
+                role = (
+                    "weight"
+                    if record.name == getattr(hook, "_weight_name", None)
+                    else "scale"
+                )
+                hook.add_slot(role, key, shape)
+            else:
+                hook.tracker.add_slot(key, shape)
         record.hook = hook
-        ctx.register(hook)
+        if id(hook) not in registered:
+            aliases = []
+            scale_name = getattr(hook, "_scale_name", None)
+            if scale_name and scale_name != hook.name:
+                aliases.append(scale_name)
+            ctx.register(hook, *aliases)
+            registered.add(id(hook))
     return ctx
 
 

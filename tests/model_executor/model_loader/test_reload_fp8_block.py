@@ -15,11 +15,13 @@ import torch
 
 from vllm.model_executor.model_loader.reload.fp8_block import (
     DeepGemmScaleHook,
+    DeepGemmUe8m0Hook,
     Fp8BlockClampHook,
     Fp8BlockIdentityHook,
     Fp8MoeW31SwapHook,
 )
 from vllm.model_executor.model_loader.reload.hooks import (
+    HookState,
     ReloadContext,
     ReloadRejected,
     RuntimeSlot,
@@ -178,6 +180,63 @@ def test_deepgemm_scale_hook_shape_mismatch_is_hard_error():
                 param, torch.ones(2, 2)
             )
         )
+
+
+def test_deepgemm_ue8m0_pair_commits_weight_and_scale_together(monkeypatch):
+    from vllm.model_executor.layers.quantization.utils import fp8_utils
+
+    weight = torch.zeros(4, 4, dtype=torch.float8_e4m3fn)
+    scale = torch.zeros(1, 1)
+    weight_slot = RuntimeSlot("weight", weight)
+    scale_slot = RuntimeSlot("scale", scale)
+
+    def loader(param, loaded_weight):
+        param.data.copy_(loaded_weight)
+
+    def fake_process(wq, ws, **kwargs):
+        assert kwargs["use_e8m0"] is True
+        return torch.full_like(wq, 2), ws + 2
+
+    monkeypatch.setattr(
+        fp8_utils, "deepgemm_post_process_fp8_weight_block", fake_process
+    )
+    hook = DeepGemmUe8m0Hook(
+        weight_slot=weight_slot,
+        weight_loader=loader,
+        weight_param=weight,
+        weight_name="weight",
+        scale_slot=scale_slot,
+        scale_loader=loader,
+        scale_param=scale,
+        scale_name="scale",
+        block_shape=(4, 4),
+        mn=4,
+        k=4,
+    )
+    hook.add_slot("weight", "full", (4, 4))
+    hook.add_slot("scale", "full", (1, 1))
+    ctx = ReloadContext()
+    ctx.register(hook, "scale")
+    ctx.start_reload()
+    assert list(ctx.hooks) == ["weight"]
+    assert ctx.hook("scale") is hook
+
+    hook.load_from_loader(
+        inspect.signature(loader).bind(weight, torch.ones_like(weight)),
+        "weight",
+    )
+    assert torch.all(weight == 0)
+    assert not hook.complete
+
+    hook.load_from_loader(
+        inspect.signature(loader).bind(scale, torch.ones_like(scale)),
+        "scale",
+    )
+    assert torch.all(weight.float() == 2)
+    assert torch.all(scale == 3)
+    assert hook.complete
+    assert hook._weight_staging is None
+    assert hook._scale_staging is None
 
 
 # ---------- dispatch-level integration ----------
@@ -458,3 +517,104 @@ def test_reload_restores_param_class_dropped_by_pwal():
 
     assert isinstance(model.weight, CustomParam)
     assert torch.all(model.weight == 3.0)
+
+
+# ---------- Marlin dense block hooks ----------
+
+
+def _cold_param(shape, dtype=torch.float32):
+    p = torch.nn.Parameter(torch.zeros(shape, dtype=dtype))
+    p.loader_attr = "marker"  # loader-visible attribute to carry over
+    return p
+
+
+def test_marlin_weight_hook_stages_full_shape_and_tracks_shards(monkeypatch):
+    from vllm.model_executor.model_loader.reload.marlin import (
+        MarlinFp8WeightHook,
+    )
+
+    # the marlin repack needs CUDA ops; here we only verify the staging
+    # mechanics and that finish_load fires exactly once at completion
+    finished = []
+    monkeypatch.setattr(
+        MarlinFp8WeightHook, "finish_load", lambda self: finished.append(1)
+    )
+
+    # merged QKV-like param: block path is size_k_first=False, so the
+    # checkpoint layout staging is (size_n, size_k)
+    runtime = torch.nn.Parameter(
+        torch.zeros(24, 8, dtype=torch.int32), requires_grad=False
+    )
+    slot = RuntimeSlot("layer.qkv.weight", runtime)
+    cold = _cold_param((24, 8), torch.float8_e4m3fn)
+    hook = MarlinFp8WeightHook(
+        slot, None, cold, size_k=8, size_n=24, size_k_first=False,
+        group_size=4,
+    )
+    for sid in ("q", "k", "v"):
+        hook.tracker.add_slot((sid, None), (8, 8))
+
+    def merged_loader(param, loaded_weight, loaded_shard_id):
+        rows = {"q": (0, 8), "k": (8, 8), "v": (16, 8)}[loaded_shard_id]
+        param.data[rows[0] : rows[0] + rows[1]].copy_(loaded_weight)
+
+    hook._original_loader = merged_loader
+    bind3 = lambda p, w, sid: inspect.signature(merged_loader).bind(  # noqa: E731
+        p, w, loaded_shard_id=sid
+    )
+    ctx = ReloadContext()
+    ctx.register(hook)
+    ctx.start_reload()
+
+    for i, sid in enumerate(("q", "k", "v")):
+        hook.load_from_loader(
+            bind3(
+                slot.tensor,
+                torch.full((8, 8), float(i + 1), dtype=torch.float8_e4m3fn),
+                sid,
+            )
+        )
+        if i == 0:
+            # pre_reload fired at the first shard and allocated the
+            # full checkpoint-layout staging buffer
+            assert hook._staging is not None
+            assert tuple(hook._staging.shape) == (24, 8)
+            # cold-load loader attributes carried onto the staging buffer
+            assert hook._staging.loader_attr == "marker"
+    assert hook.complete
+    # runtime untouched until finish_load (marlin repack needs CUDA)
+    assert torch.all(slot.tensor == 0)
+    staging = hook._staging
+    for i in range(3):
+        assert torch.all(
+            staging[8 * i : 8 * i + 8].float() == float(i + 1)
+        )
+    assert finished == [1]
+
+
+def test_marlin_hook_rejects_shard_before_pre_reload():
+    from vllm.model_executor.model_loader.reload.marlin import (
+        MarlinFp8ScaleHook,
+    )
+
+    slot = RuntimeSlot("layer.weight_scale_inv", torch.zeros(2, 2))
+    cold = _cold_param((2, 2))
+    hook = MarlinFp8ScaleHook(
+        slot,
+        lambda param, loaded_weight: param.data.copy_(loaded_weight),
+        cold,
+        size_k=8,
+        size_n=8,
+        size_k_first=False,
+        block_size=(4, 4),
+        input_dtype=None,
+    )
+    hook.tracker.add_slot("full", (2, 2))
+    # bypass pre_reload to prove the guard
+    hook.state = HookState.RECEIVING
+    with pytest.raises(ReloadRejected, match="pre_reload"):
+        hook.load_from_loader(
+            inspect.signature(hook._original_loader).bind(
+                slot.tensor, torch.ones(2, 2)
+            )
+        )

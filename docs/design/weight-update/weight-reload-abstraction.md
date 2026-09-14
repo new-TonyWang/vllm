@@ -151,9 +151,9 @@ staging 副本。
     `copy_` 进 runtime storage、scale clamp / backend repack、刷新派生
     slot（alpha、reciprocal scale）、释放 CONVERT buffer、完成性校验。
     凡是依赖"权重完整"的操作一律放这里，不允许放进 post_load 逐分片执行。
-- `start_reload` 在任何分片到达之前调用：进入 reload 状态，遍历计划
-  集合把每个权重的两个 hook 装载到 reload 上下文；此时尚未有任何
-  数据写入运行时 storage。
+- `start_reload` 在任何分片到达之前调用：依据 cold load 观察到的 loader
+  调用，构建每个 runtime slot 的到达表并装载 hook；此时尚未有任何数据写入
+  runtime storage。
 - IN_PLACE 权重的 `pre_reload` 只做校验（零分配），`finish_load` 退化为
   直接 `copy_`——"原地拷贝优先"通过 hook 实现自然落地。
 
@@ -162,28 +162,32 @@ staging 副本。
 ```mermaid
 sequenceDiagram
     participant Engine as 传输引擎 (NCCL/IPC/RDT)
+    participant Model as model.load_weights()
     participant Ctx as ReloadContext
     participant W as 权重 slot (per weight)
     participant RT as 运行时 storage / kernel
 
-    Note over Ctx: start_reload(): 激活 reload 状态<br/>装载所有权重的 pre_reload / post_load / finish_load
+    Note over Ctx: start_reload(): 激活已由 cold load observer 声明的 hooks
     loop 每个到达的分片 shard_i
-        Engine->>Ctx: deliver(weight_name, shard)
+        Engine->>Model: checkpoint name, tensor
+        Model->>W: 包装后的 weight_loader(...)
         alt 该权重首个分片
-            Ctx->>W: pre_reload(meta)
+            W->>W: pre_reload(meta)
             Note right of W: 记录元数据 / 预校验<br/>需要转换才分配 CONVERT buffer
         end
-        Ctx->>W: 写入分片 (CONVERT buffer 或记录 in-place 计划)
-        Ctx->>W: post_load() (默认空实现)
+        W->>W: 校验到达 key / shape
+        W->>RT: 原始 loader 写入，或写入 CONVERT buffer
+        W->>W: post_load() (默认空实现)
         Note over Ctx,W: 覆盖位图 / 分片计数 更新
         alt 完成条件满足 (按量化/后端定义)
-            Ctx->>W: finish_load()
+            W->>W: finish_load()
             W->>RT: 转换 + copy_ 原地写入 (指针不变)
             W->>RT: 刷新派生 slot (alpha 等, copy_)
             Note right of W: 释放 CONVERT buffer
         end
     end
-    Note over Ctx: FINISH: 所有权重 finish_load 完成 → reload 生效<br/>缺/重/错：写前可检 → 拒绝且 runtime 完整；<br/>写后发现 → 硬报错，引擎状态未定义，终止服务
+    Model->>Ctx: finalize_reload() / FINISH
+    Note over Ctx: 所有 hook 完成 → reload 生效<br/>缺/重/错：写前可检 → 拒绝且 runtime 完整；<br/>写后发现 → 硬报错，引擎状态未定义，终止服务
 ```
 
 ### 6.3 单权重状态机
@@ -212,45 +216,48 @@ stateDiagram-v2
 
 渲染图：[reload-seq.png](reload-seq.png)（时序图）、[reload-state.png](reload-state.png)（状态机）。
 
-## 7. 非量化权重的 hook 设计
+## 7. 非量化权重的 observer + LoaderWeightHook 设计
 
 非量化 = 运行时 storage 与 checkpoint 同 dtype、同 layout（或仅相差融合/切分
 结构），因此**所有非量化权重都不需要 CONVERT buffer，全部原地写**。
-差异只在"到达追踪的粒度"和"写入偏移的计算"。dtype 不一致的 cast（如 fp32 → bf16）不视为转换：`copy_` 本身隐式完成，零分配。
+每个被 cold load 观察到的运行时参数注册一个 `LoaderWeightHook`。它只负责
+记录到达表、写前校验和完成性校验；运行时偏移、TP/EP 切分、padding 与实际
+`copy_` 仍由模型既有的 `weight_loader` 处理。dtype 不一致的 cast（如 fp32 →
+bf16）不视为转换：原始 loader 的 `copy_` 隐式完成，零分配。
 
 ### 7.1 情况分类
 
-| # | 情况 | 例子 | pre_reload | load_weight | finish_load | 完成条件 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | 普通密集权重，无融合无切分 | RMSNorm weight、o_proj(单分片到达) | 空实现 | `runtime.copy_(shard)` | 空实现 | 单分片到达即完成 |
-| 2 | 行/列融合权重（多逻辑分片写一个张量） | merged QKV（q/k/v 三个 shard_id）、dense MLP gate_up（gate/up 两个 shard_id） | 记录各逻辑分片的行偏移与期望形状 | 按 shard_id 算行偏移，写入对应行区间，登记该 shard_id 已到达 | 空实现（可选：校验） | 全部 shard_id 到齐 |
-| 3 | 词表并行 + padding | embedding、lm_head | 记录 padded 行数与真实 vocab 行数 | 只写前 `vocab_size/tp` 行，padding 区保持不动 | 空实现 | 单分片到达 |
-| 4 | 共享存储（tied weights） | tie_word_embeddings 的 embedding/lm_head | 登记别名：两个名字指向同一 storage | 同 #3 | 去重：第二个名字到达时识别为同一 slot，不重复写、不重复计数 | 去重后的唯一 slot 写满 |
-| 5 | 非量化 MoE 融合专家权重 w2 | `experts.w2_weight` (E×K×N) | 建立 expert 到达表（E 个槽位），记录每个 expert 的行偏移 `e*K` | 按分片携带的 expert_id 写到 `[e*K:(e+1)*K]` 行区间，登记该 expert | 校验 E 个 expert 全部到达 | E 个 expert 全部到齐 |
-| 6 | 非量化 MoE 融合专家权重 w13 | `experts.w13_weight` (E×2N×K) | 建立 (expert, half) 二维到达表（E×2 槽位：w1/gate 半区 + w3/up 半区），记录半区行偏移 `e*2N` 与 `e*2N+N` | w1 分片写 `[e*2N : e*2N+N]`，w3 分片写 `[e*2N+N : e*2N+2N]`，分别登记 | 校验 E×2 个槽位全部到达 | E 个 expert 的 w1、w3 全部到齐 |
-| 7 | MoE 共享专家 / 稠密旁路 | DeepSeek 式 shared_experts（本质是 dense gate_up + down） | 按 #2 / #1 处理 | 按 #2 / #1 | 按 #2 / #1 | 按 #2 / #1 |
-| 8 | dtype 不一致的非量化（cast） | checkpoint fp32 → 运行时 bf16 | 空实现 | `runtime.copy_(shard)`（`copy_` 隐式 cast，零分配） | 空实现 | 分片到齐 |
+| # | 情况 | 例子 | cold-load 记录的 key | reload 写入 | 完成条件 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 普通密集权重，无融合无切分 | RMSNorm weight、o_proj | `full` | 原始 loader 全量 `copy_` | 单分片到达 |
+| 2 | 行/列融合权重 | merged QKV、dense MLP gate_up | `shard_id` / `loaded_shard_id` | 原始 loader 按自身映射写对应区间 | 全部逻辑分片到齐 |
+| 3 | 词表并行 + padding | embedding、lm_head | `full` | 原始 loader 只写真实词表行 | 单分片到达 |
+| 4 | 共享存储 | tie_word_embeddings | 运行时参数名 + 观察到的 key | 原始 loader；同一 slot 的别名到达去重 | 去重后的唯一 slot 写满 |
+| 5 | MoE 融合专家权重 w2 | `experts.w2_weight` | `(None, expert_id)` | 原始 MoE loader 写入本地 expert 平面 | 所有本地 expert 到齐 |
+| 6 | MoE 融合专家权重 w13 | `experts.w13_weight` | `("w1"/"w3", expert_id)` | 原始 MoE loader 写入对应 expert 半区 | 所有本地 expert 的 w1、w3 到齐 |
+| 7 | MoE 共享专家 / 稠密旁路 | DeepSeek shared_experts | 同 #1 / #2 | 同 #1 / #2 | 同 #1 / #2 |
+| 8 | dtype 不一致的非量化 | checkpoint fp32 → runtime bf16 | 与对应结构相同 | 原始 loader 的 `copy_` 隐式 cast | 对应分片到齐 |
 
 ### 7.2 关键设计点
 
-**到达追踪（ArrivalTracker）。** pre_reload 按权重结构建立到达表：
+**到达追踪（ArrivalTracker）。** cold load observer 从每一次原始
+`weight_loader` 调用中记录 `(key, shape)`；`initialize_reload` 将这些记录
+装入对应 `LoaderWeightHook` 的到达表：
 
 - 普通权重：1 个槽位；
 - 融合 dense 权重：按 shard_id 建槽（q/k/v 或 gate/up）；
 - MoE w2：按 expert_id 建 E 个槽位；
 - MoE w13：按 (expert_id, half) 建 E×2 个槽位，w1/w3 分片独立登记——
   这正面回答了"w13 需要同时记录 w1 和 w3 到达情况"的需求；
-- 每个槽位记录：期望形状、运行时偏移（行区间或 expert 区间）、是否已写。
+- 每个槽位记录：期望 shape、是否已写。
 
 finish_load 的完成条件统一为"到达表填满"，不同情况只是表的形状不同。
-重复到达同一槽位、未知 expert_id、偏移越界都在写入前拒绝。
+重复到达同一槽位、未知 `(shard_id, expert_id)` 或 shape 不匹配都在写入前
+拒绝；原始 loader 继续负责自身的偏移/边界校验。
 
-**偏移计算规则。** 融合权重统一用"逻辑分片 → 运行时行区间"映射：
-
-- w13：`w1_e → [2N·e, 2N·e+N)`，`w3_e → [2N·e+N, 2N·e+2N)`；
-- w2：`e → [K·e, K·e+K)`（对 E×K×N 沿第 0 维）；
-- merged QKV：按 cold load 时 weight_loader 记录的 q/k/v 行边界；
-- gate_up：gate 在前半、up 在后半（与 cold load 的融合顺序一致，不重新发明）。
+**写入映射。** 非量化 reload 不复制融合、词表 padding、TP/EP 切分或 MoE
+expert 到运行时偏移的逻辑。它复用模型 cold load 已验证的原始
+`weight_loader`，避免用参数名或张量形状重新推断模型特定布局。
 
 **中间态可见性（必须明确的假设）。** 非量化权重原地写意味着：全部槽位
 填满之前，运行时 storage 处于新旧混合状态。这只有在 **reload 期间推理
