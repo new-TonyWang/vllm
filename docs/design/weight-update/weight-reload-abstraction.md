@@ -394,9 +394,11 @@ Tracer 只保存小型元数据：
 - 一个输入 tracer 可以被多个派生节点依赖；
 - dependency edge 不应改变模块的 ownership，也不应造成重复注册。
 
-例如 `MLAAttentionTracer` 可以依赖多个成员 tracer。只有成员 tracer 全部
-完成，且输入 shape、dtype 和 layout 检查通过后，父 tracer 才能生成
-`W_UV`、`W_UK` 等派生权重。生成成功后，派生权重必须通过原地
+例如 `MLAAttentionTracer` 可以依赖多个 Attention 成员 tracer。只有这些
+成员 tracer 全部完成，且输入 shape、dtype 和 layout 检查通过后，父 tracer
+才能生成 `W_UV`、`W_UK` 等派生权重。MLP/MoE 成员不属于这个依赖集合，
+它们只向各自的 `MLPTracer` 汇报，最后由 `DecoderLayerTracer` 聚合。生成
+成功后，派生权重必须通过原地
 `copy_` 更新既有 runtime storage，不能替换 `Parameter` 或底层 storage
 引用，否则已有 kernel、缓存和模块引用可能仍指向旧对象。
 
@@ -416,7 +418,8 @@ and derived outputs generated successfully
 父模块拥有子模块 tracer；虚线表示 dependency edge：目标 tracer 的
 `finish` 依赖源 tracer 的完成。图中的 `MLAAttentionTracer` 和
 `QuantizedLinearTracer` 可能不在同一条模块父子路径上，但它们可以通过
-依赖边参与同一个派生权重计算。
+依赖边参与同一个派生权重计算；不相关的 MLP/MoE tracer 不应连接到
+`MLAAttentionTracer`。
 
 ```mermaid
 flowchart TD
@@ -447,18 +450,19 @@ flowchart TD
     Routed --> W2
     QKV --> QWeight
     QKV --> QScale
-    W1 --> QWeight
-    W3 --> QWeight
-    W2 --> QWeight
     QWeight --> Derived
     QScale --> Derived
+    Dense -. "complete" .-> MLP
+    W1 -. "complete" .-> Routed
+    W3 -. "complete" .-> Routed
+    W2 -. "complete" .-> Routed
+    Routed -. "complete" .-> MLP
+    MLP -. "complete" .-> Layer
 
     QKV -. "complete" .-> Attn
-    QScale -. "complete" .-> Attn
-    Dense -. "complete" .-> Attn
-    W1 -. "complete" .-> Attn
-    W3 -. "complete" .-> Attn
-    Derived -. "refresh" .-> Attn
+    QWeight -. "complete" .-> Derived
+    QScale -. "complete" .-> Derived
+    Derived -. "complete" .-> Attn
     Attn -. "finish" .-> UV
     Attn -. "finish" .-> UK
 ```
@@ -488,7 +492,7 @@ sequenceDiagram
 
     Q->>Q: after_write(weight/scale)
     E->>E: after_write(expert shard)
-    Q-->>A: child complete
+    Q-->>A: attention child complete
     E-->>L: child complete
     A->>A: check own slots and dependencies
     A->>D: finish derived state
