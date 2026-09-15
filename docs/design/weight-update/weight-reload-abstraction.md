@@ -749,17 +749,66 @@ expert/shard；只有实际写入成功后才能标记 arrived。对于 policy �
 
 ### 9.9 Finish 调度和派生状态
 
-`ModelReloadTracer.finish()` 不直接按 Python module 遍历顺序调用所有 state。
-它应先检查当前 round 是否为空、构建 dependency DAG 的 ready set，然后执行：
+Finish 默认采用**自底向上的通知**，而不是在 FINISH 阶段按 Python module
+遍历顺序扫描并调用所有 state。这里的“底”是没有未完成依赖的叶子
+`ReloadState`，这里的“上”是依赖叶子 state 的量化 state、复合模块 state
+和模型级汇总 state。
 
-1. 检查每个 state 的 slot table，收集 missing/duplicate/error；
-2. 仅对自身 slots 完整且 dependencies 已完成的 state 调用
-   `policy.finish()`；
-3. policy 完成 weight/scale 的联合转换、repack、requant 或 scale refresh；
-4. 派生结果通过 `copy_` 写入已有 Parameter/buffer/derived target；
-5. state 标记 complete，并释放本轮 staging；
-6. 继续调度依赖该 state 的其它 state；
-7. 所有 state 完成后返回成功，否则返回带完整路径的错误报告。
+自底向上的通知过程如下：
+
+1. arrival event 写入成功后，更新对应 state 的 slot table；
+2. state 判断自己的 required slots 是否全部到达；
+3. 如果 slots 完整且所有 dependency states 已完成，state 进入 `READY`；
+4. scheduler 将 `READY` state 放入队列，并调用其 `policy.finish()`；
+5. policy 完成 weight/scale 的联合转换、repack、requant 或 scale refresh；
+6. 派生结果通过 `copy_` 写入已有 Parameter、buffer 或 derived target；
+7. state 进入 `COMPLETE`，释放本轮 staging；
+8. state 向所有 dependent states 发送 `complete` 通知；
+9. 被通知的 dependent state 重新检查自己的 slots 和 dependencies，满足条件
+   后继续向上完成。
+
+因此，子 state 的完成不是直接调用任意父模块的 `finish()`，而是向
+`ModelReloadTracer` 的 scheduler 发送一个完成事件。scheduler 使用显式队列
+驱动后续 state，既保留自底向上的语义，也避免深层递归、重复 finish 和
+Python 模块遍历顺序造成的不确定性。
+
+```mermaid
+sequenceDiagram
+    participant W as Leaf ReloadState
+    participant S as ModelReloadTracer scheduler
+    participant Q as QuantizedLinearState
+    participant M as MLAAttentionState
+    participant L as DecoderLayerState
+
+    W->>W: mark_arrived(last required slot)
+    W->>S: notify_complete(W)
+    S->>Q: enqueue_if_ready(Q)
+    Q->>Q: policy.finish()
+    Q->>Q: copy_ derived target
+    Q->>S: notify_complete(Q)
+    S->>M: enqueue_if_ready(M)
+    M->>M: policy.finish() for W_UV/W_UK
+    M->>S: notify_complete(M)
+    S->>L: enqueue_if_ready(L)
+    L->>L: aggregate child states
+```
+
+对于同一个 `ReloadState`，需要区分三种关系：
+
+- **ownership parent**：模块层级上的拥有者，例如 `QuantizedLinearState`
+  属于某个 decoder layer；
+- **dependency source**：finish 前必须完成的输入 state；
+- **dependent state**：等待当前 state 完成并接收通知的 state。
+
+ownership parent 不一定是 dependency source。比如 `RoutedExpertsState` 和
+`MLAAttentionState` 可能属于同一个 decoder layer，但 RoutedExperts 的
+complete 只汇报给它的 ownership parent 或 layer aggregation state，不应
+通知 `MLAAttentionState`。只有真正参与 MLA 派生计算的 state 才注册为
+`MLAAttentionState` 的 dependency source。
+
+自底向上的通知只推进完成状态，不改变 loader 的写入职责。loader 仍然负责
+解析 checkpoint 名称、TP/EP、offset、padding、fused mapping 和实际写入；
+通知只在写入成功并且 slot 已标记后触发。
 
 例如 `QuantizedLinearState` 的依赖是：
 
@@ -774,6 +823,103 @@ and slots["scale"] complete
 例如 `MLAAttentionState` 只有在其依赖的输入 state 完成后，才允许生成
 `W_UV`、`W_UK`。MLP/MoE state 不应自动成为 MLA 的依赖；只有真正参与
 Attention 派生计算的 state 才建立 dependency edge。
+
+通知调度需要满足以下不变量：
+
+- 一个 state 在一个 reload round 内最多执行一次成功的 `policy.finish()`；
+- `COMPLETE` 通知可以被重复投递，但 dependent state 必须幂等处理；
+- state 只有在自身 slots 和所有 dependency states 都完成后才能进入 `READY`；
+- `FAILED` state 不得继续通知 complete，所有依赖它的 dependent states
+  都必须保持未完成或进入 `BLOCKED`；
+- dependency graph 必须在注册时检查环，不能在 finish 阶段等待一个永远不会
+  到达的通知；
+- 通知顺序只影响队列处理顺序，不影响最终完成结果。
+
+建议 API：
+
+```python
+class ReloadState:
+    def add_dependent(self, state_key: ReloadStateKey) -> None:
+        ...
+
+    def after_write(
+        self,
+        arrival: ReloadArrival,
+        scheduler: "ReloadScheduler",
+    ) -> None:
+        ...
+
+    def on_dependency_complete(
+        self,
+        dependency_key: ReloadStateKey,
+        scheduler: "ReloadScheduler",
+    ) -> None:
+        ...
+
+    def try_finish(self, scheduler: "ReloadScheduler") -> bool:
+        ...
+
+    def notify_complete(self, scheduler: "ReloadScheduler") -> None:
+        ...
+
+
+class ReloadScheduler(Protocol):
+    def enqueue_if_ready(self, state_key: ReloadStateKey) -> None:
+        ...
+
+    def notify_state_complete(self, state_key: ReloadStateKey) -> None:
+        ...
+
+    def drain_notifications(self) -> None:
+        ...
+```
+
+其中 `ReloadState.after_write()` 只更新 slot 状态并请求调度，不应直接递归
+调用 dependent state。`ReloadState.try_finish()` 负责检查完成条件并调用
+policy；`notify_complete()` 只向 scheduler 发送一次逻辑完成通知。实际实现
+可以用 `notified_dependents` 或 state generation 记录去重。
+
+`ModelReloadTracer` 作为 scheduler 的一个具体实现：
+
+```python
+class ModelReloadTracer(ReloadScheduler):
+    def route(self, arrival: ReloadArrival) -> None:
+        ...
+
+    def enqueue_if_ready(self, state_key: ReloadStateKey) -> None:
+        ...
+
+    def notify_state_complete(self, state_key: ReloadStateKey) -> None:
+        ...
+
+    def drain_notifications(self) -> None:
+        ...
+
+    def finish(self) -> "ReloadResult":
+        ...
+```
+
+推荐的 `finish()` 行为是：
+
+```text
+begin FINISH
+    -> validate all slot tables
+    -> enqueue leaf/ready states
+    -> drain_notifications()
+    -> collect missing, failed and blocked states
+    -> commit round if every required state is COMPLETE
+```
+
+如果某个 state 的 slots 已完整，但 dependency source 没有完成，它应保持
+`BLOCKED`，而不是被重复执行。FINISH 结束时，`BLOCKED` state 的报告必须
+包含未完成的 dependency path，例如：
+
+```text
+model.layers.0.self_attn.mla
+  blocked by:
+  model.layers.0.self_attn.kv_b_proj
+    missing: role=scale, shard=k
+```
 
 ### 9.10 生命周期、错误语义和 API
 
