@@ -417,8 +417,13 @@ def _build_hook_context(
         if record.name not in slots or record.name not in makers:
             continue
         quant_method, module, local_name = makers[record.name]
-        group_factory = getattr(quant_method, "make_reload_hook_groups", None)
-        if not callable(group_factory):
+        try:
+            supports_group = "hook_group" in inspect.signature(
+                quant_method.make_reload_hook
+            ).parameters
+        except (TypeError, ValueError):
+            supports_group = False
+        if not supports_group:
             continue
         module_key = (record.name.rsplit(".", 1)[0], id(quant_method))
         group = hook_groups.setdefault(
@@ -446,12 +451,17 @@ def _build_hook_context(
         }
         if set(group_slots) != set(names):
             continue
-        made = group["method"].make_reload_hook_groups(
+        made = group["method"].make_reload_hook(
             group["module"],
-            group_slots,
-            group_loaders,
-            group_params,
-            names,
+            None,
+            None,
+            None,
+            hook_group={
+                "slots": group_slots,
+                "loaders": group_loaders,
+                "cold_params": group_params,
+                "names": names,
+            },
         )
         if made is not None:
             for local, hook in made.items():

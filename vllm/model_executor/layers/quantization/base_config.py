@@ -75,6 +75,31 @@ class QuantizeMethodBase(ABC):
         """Whether this method supports in-place selective weight reload."""
         return False
 
+    def supports_hook_reload(self) -> bool:
+        """Whether this method supports loader-driven hook reload."""
+        return False
+
+    def make_reload_hook(
+        self,
+        layer: torch.nn.Module,
+        param_name: str | None,
+        slot: Any | None,
+        original_loader: Any | None,
+        cold_param: torch.Tensor | None = None,
+        *,
+        hook_group: Any | None = None,
+    ) -> Any:
+        """Build a hook for one parameter or a related parameter group.
+
+        ``hook_group`` is used by quantization methods that need to build one
+        hook for related runtime parameters, such as a DeepGEMM weight/scale
+        pair.
+
+        Quantization methods must override this together with
+        :meth:`supports_hook_reload` to opt into hook reload.
+        """
+        return None
+
     def restore_weights_before_loading(self, layer: nn.Module) -> None:
         """Restore runtime storage to checkpoint layout before an update."""
         return

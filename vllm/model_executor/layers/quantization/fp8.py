@@ -454,9 +454,33 @@ class Fp8LinearMethod(LinearMethodBase):
             return True
         return name in _FP8_BLOCK_HOOK_IDENTITY_KERNELS
 
-    def make_reload_hook_groups(
-        self, layer, slots, loaders, cold_params, names
+    def make_reload_hook(
+        self,
+        layer,
+        param_name,
+        slot,
+        original_loader,
+        cold_param=None,
+        *,
+        hook_group=None,
     ):
+        """Build a hook for one parameter or the DeepGEMM weight/scale pair."""
+        if hook_group is not None:
+            kernel = getattr(self, "fp8_linear", None)
+            if not getattr(kernel, "use_deep_gemm_e8m0", False):
+                return None
+            return self._make_deepgemm_reload_hook(
+                layer,
+                hook_group["slots"],
+                hook_group["loaders"],
+                hook_group["cold_params"],
+                hook_group["names"],
+            )
+        return self._make_single_reload_hook(
+            layer, param_name, slot, original_loader, cold_param
+        )
+
+    def _make_deepgemm_reload_hook(self, layer, slots, loaders, cold_params, names):
         """Build one hook for the DeepGemm UE8M0 weight/scale pair."""
         kernel = getattr(self, "fp8_linear", None)
         if not getattr(kernel, "use_deep_gemm_e8m0", False):
@@ -508,7 +532,7 @@ class Fp8LinearMethod(LinearMethodBase):
             "weight_scale_inv": hook,
         }
 
-    def make_reload_hook(
+    def _make_single_reload_hook(
         self, layer, param_name, slot, original_loader, cold_param=None
     ):
         """Build the reload hook for one parameter of this layer."""
@@ -1126,7 +1150,35 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             Fp8MoeBackend.FLASHINFER_CUTLASS,
         )
 
-    def make_reload_hook_groups(
+    def make_reload_hook(
+        self,
+        layer,
+        param_name,
+        slot,
+        original_loader,
+        cold_param=None,
+        *,
+        hook_group=None,
+    ):
+        """Build a hook for one parameter or DeepGEMM weight/scale pairs."""
+        if hook_group is not None:
+            if self.fp8_backend not in (
+                Fp8MoeBackend.DEEPGEMM,
+                Fp8MoeBackend.BATCHED_DEEPGEMM,
+            ):
+                return None
+            return self._make_deepgemm_reload_hooks(
+                layer,
+                hook_group["slots"],
+                hook_group["loaders"],
+                hook_group["cold_params"],
+                hook_group["names"],
+            )
+        return self._make_single_reload_hook(
+            layer, param_name, slot, original_loader, cold_param
+        )
+
+    def _make_deepgemm_reload_hooks(
         self, layer, slots, loaders, cold_params, names
     ):
         """Build one hook per DeepGemm UE8M0 MoE weight/scale pair."""
@@ -1177,7 +1229,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             result[scale_name] = hook
         return result
 
-    def make_reload_hook(
+    def _make_single_reload_hook(
         self, layer, param_name, slot, original_loader, cold_param=None
     ):
         """Build the reload hook for one parameter of this MoE layer."""
