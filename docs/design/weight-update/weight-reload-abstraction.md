@@ -310,7 +310,7 @@ finish_load 对整张小 scale 张量一次完成。
 | 物理逆变换（后备，#9） | 全部校验前移到逆变换之前 | 逆变换一旦发生旧 layout 即不存在，任何后续失败不可恢复 | 逆变换到正变换之间视为原子临界区（推理静默的强形式） |
 | 公共语义 | FINISH：到达表填满 → finish_load → 生效 | 空到达 → no-op；缺/重/错一律硬报错 | 不变 |
 
-## 9. 基于模块 Tracer 的 reload 状态追踪方案
+## 9. 基于 ModelReloadTracer 的 reload 状态追踪方案
 
 ### 9.1 设计动机
 
@@ -321,20 +321,40 @@ finish_load 对整张小 scale 张量一次完成。
 共同推断状态。随着 MoE、量化后端和具有派生权重的复合模块增多，状态定义、
 布局映射和 finish 依赖会逐渐分散到 hook、loader 和模块特例中。
 
-Tracer 方案把“应该收到什么”和“已经收到什么”提升为模块级的显式状态对象：
+本方案不再为每个 weight 或 scale 创建独立的 tracer。整个模型只拥有一个
+`ModelReloadTracer`，它管理所有 reloadable module 的 `ReloadState`，并由
+backend-specific `ReloadPolicy` 处理量化后端差异：
 
-- reload 初始化时，根据模型结构和模块配置构建 tracer；
-- 每个权重到达时，向对应 tracer 上报一个规范化的 arrival event；
-- tracer 校验 expected slot、shape、重复到达和未知分片，并记录状态；
-- finish 阶段从叶子 tracer 向上汇总完成性，执行依赖模块的派生变换；
-- 调用端可以获得带有层级、参数、expert 和 shard 信息的 missing 列表。
+```text
+ModelReloadTracer
+├── ReloadState
+│   ├── ReloadTarget
+│   ├── SlotTable
+│   ├── ReloadPolicy
+│   └── dependencies
+└── global event router / finish scheduler
+```
+
+三层职责分别是：
+
+1. **`ModelReloadTracer`**：负责模型级生命周期、arrival event 路由、
+   finish 调度、依赖排序、错误汇总和 missing 报告。
+2. **`ReloadState`**：负责一个模块或一个逻辑权重组的 reload 状态。它保存
+   参数/缓冲区 target、不同角色的 slot table、模块依赖和当前完成状态。
+3. **`ReloadPolicy`**：负责普通权重、FP8、Marlin、CUTLASS、DeepGEMM、
+   MoE 等具体后端的 slot 构建、事件解释和 finish 转换。
+
+`Parameter` 和 buffer 不拥有 tracer。它们只是 `ReloadTarget`；具体分片的
+expected/arrived 状态统一保存在对应 `ReloadState` 的 `SlotTable` 中。
+这样可以避免大量细粒度 tracer 类，同时保留对不同量化后端和复杂分片的表达
+能力。
 
 这里的目标不是重新实现一套 weight loader，而是让 loader 继续负责实际写入
-和模型特有的映射，Tracer 负责可验证的 reload 状态机。
+和模型特有的映射，`ModelReloadTracer` 负责可验证的 reload 状态机。
 
-### 9.2 Tracer 的职责边界
+### 9.2 ModelReloadTracer 的职责边界
 
-一个 Tracer 应负责以下状态和检查：
+`ModelReloadTracer` 和 `ReloadState` 应负责以下状态和检查：
 
 1. **声明 expected slots**：描述该模块在当前 rank、当前并行配置下必须收到
    的参数或分片。
@@ -342,316 +362,468 @@ Tracer 方案把“应该收到什么”和“已经收到什么”提升为模�
    来源和必要的元数据。
 3. **写前校验**：拒绝未知 slot、重复 slot、shape 不匹配、非法 shard 或
    expert 标识。
-4. **判断完成**：只有所有 required slots 到达后，叶子 tracer 才能完成。
+4. **判断完成**：只有所有 required slots 到达后，叶子 state 才能完成。
 5. **汇总 missing**：返回稳定且可定位的缺失路径，而不是只返回一个参数名。
-6. **触发依赖节点**：当子 tracer 完成时通知依赖它的父 tracer。
+6. **触发依赖节点**：当依赖 state 完成时，唤醒依赖它的其它 state。
 7. **执行 finish**：在输入和依赖完整后，执行派生权重转换并确认输出状态。
 
-Tracer 不应负责以下逻辑：
+这里的“子节点”是 `ReloadState` 或 dependency edge，不是独立的
+weight tracer。`ModelReloadTracer` 可以按照模块路径组织这些 state，
+但不要求每个 state 都是一个 PyTorch module 或一个独立的 tracer 对象。
+
+`ModelReloadTracer` 和 `ReloadState` 不应负责以下逻辑：
 
 - 不复制 `weight_loader` 中已有的 TP、EP、offset、padding、fused shard
   和 expert physical mapping 写入逻辑；
 - 不通过参数名和 shape 自己猜测模型布局；
-- 不持有完整权重或 staging buffer；
 - 不替换 `Parameter`、storage 或量化 kernel 所引用的对象；
 - 不把“调用了 loader”直接等价为“写入成功”，arrival 应在实际写入成功后
   登记，或由 loader adapter 明确划分 `before_write` 和 `after_write`。
 
+`ReloadState` 也不负责实现 backend 转换算法。requant、repack、scale
+重排和派生状态刷新都由 `ReloadPolicy.finish()` 执行。必要的 staging buffer
+由 policy 或模块 runtime storage 管理，`ModelReloadTracer` 只调度其生命周期
+并记录结果状态。
+
 这样可以把状态正确性和物理写入解耦：loader 仍是 layout 的唯一生产者，
-Tracer 是 reload 完整性和依赖关系的唯一生产抽象。
+`ModelReloadTracer` 是 reload 完整性和依赖关系的唯一生产抽象，
+`ReloadPolicy` 是 backend 行为的唯一生产抽象。
 
-### 9.3 Tracer 的归属和对象模型
+### 9.3 ModelReloadTracer、ReloadState 和 ReloadPolicy
 
-推荐每个 `nn.Module` 实例拥有一个 owner tracer，而不是让所有同类
-`QuantizeMethod` 实例共享一个全局 tracer。原因是 expected slots 取决于
-具体模块实例、当前 rank、并行配置和 expert mapping；共享 tracer 容易把
-不同层或不同参数的状态混在一起。
+#### 9.3.1 ModelReloadTracer
 
-Tracer 本身不应继承 `nn.Module`，也不应作为 `nn.Module` 的 registered
-submodule 或 parameter 保存。否则它可能被 `named_modules()`、`state_dict()`、
-`.to()`、序列化和模块遍历当作模型对象处理。更合适的归属方式是模块持有一个
-私有的非注册属性，例如 `_reload_tracer`，或者由 reload context 维护
-`module -> tracer` 的外部映射。
+`ModelReloadTracer` 是 reload context 中的单一协调器，不应继承
+`nn.Module`，也不应注册为模型的 submodule、parameter 或 buffer。否则它可能
+被 `named_modules()`、`state_dict()`、`.to()`、序列化和模块遍历误认为模型
+对象。
 
-Tracer 只保存小型元数据：
+它通过稳定的 `StateKey` 索引所有 `ReloadState`：
 
-- owner module 或稳定的 module path；
-- slot 定义和到达位图；
-- shape/dtype/layout 的摘要；
-- child tracer 和 dependency edge；
-- finish 状态、错误状态和 missing 信息。
-
-大权重、转换结果和临时 buffer 仍由模块、quant method 或现有 hook 管理。
-
-### 9.4 Tracer 树和依赖 DAG
-
-模块层级天然可以构成一棵 tracer tree：父模块对应的 tracer 持有成员模块
-的 child tracer，并能按模块路径汇总状态。但是派生权重通常依赖多个输入，
-因此完整关系不是单纯的树，而是“ownership tree + dependency DAG”：
-
-- **ownership tree** 表示 tracer 属于哪个模块实例；
-- **dependency edge** 表示某个 tracer 的 finish 依赖哪些输入 tracer；
-- 一个输入 tracer 可以被多个派生节点依赖；
-- dependency edge 不应改变模块的 ownership，也不应造成重复注册。
-
-例如 `MLAAttentionTracer` 可以依赖多个 Attention 成员 tracer。只有这些
-成员 tracer 全部完成，且输入 shape、dtype 和 layout 检查通过后，父 tracer
-才能生成 `W_UV`、`W_UK` 等派生权重。MLP/MoE 成员不属于这个依赖集合，
-它们只向各自的 `MLPTracer` 汇报，最后由 `DecoderLayerTracer` 聚合。生成
-成功后，派生权重必须通过原地
-`copy_` 更新既有 runtime storage，不能替换 `Parameter` 或底层 storage
-引用，否则已有 kernel、缓存和模块引用可能仍指向旧对象。
-
-父 tracer 的完成条件应明确为：
-
-```text
-own expected slots complete
-and all dependency tracers complete
-and derived outputs generated successfully
+```python
+@dataclass(frozen=True)
+class ReloadStateKey:
+    module_path: str
+    state_name: str
 ```
 
-建议由显式 reload 调度上下文执行自底向上的 finish，或采用明确的
-“child complete -> parent notified”通知机制。不要依赖 Python 模块遍历顺序
-来隐式决定派生权重的执行顺序。
+示例：
 
-不同层级 tracer 的关系可以表示为下面的图。实线表示 ownership tree：
-父模块拥有子模块 tracer；虚线表示 dependency edge：目标 tracer 的
-`finish` 依赖源 tracer 的完成。图中的 `MLAAttentionTracer` 和
-`QuantizedLinearTracer` 可能不在同一条模块父子路径上，但它们可以通过
-依赖边参与同一个派生权重计算；不相关的 MLP/MoE tracer 不应连接到
-`MLAAttentionTracer`。
+```text
+("model.layers.0.self_attn.qkv_proj", "quantized_linear")
+("model.layers.0.mlp.experts", "routed_experts")
+```
+
+`ModelReloadTracer` 的主要职责：
+
+- 注册和查找 `ReloadState`；
+- 将 loader adapter 产生的 `ReloadArrival` 路由到正确的 state；
+- 统一调用 `before_write`、原始 loader 和 `after_write`；
+- 按 dependency DAG 调度 state 的 finish；
+- 汇总所有 state 的 missing、duplicate、unknown 和 backend error；
+- 管理 reload round 的 begin、finish、reset 和幂等性。
+
+#### 9.3.2 ReloadState
+
+`ReloadState` 是一个轻量的数据状态对象，不是 tracer，也不是
+`nn.Module`。它代表一个模块或逻辑权重组，例如一个普通 `Linear`、一个
+`QuantizedLinear` 或一个 `RoutedExperts`。
+
+```python
+@dataclass
+class ReloadState:
+    key: ReloadStateKey
+    targets: dict[str, "ReloadTarget"]
+    slots: dict[str, "SlotTable"]
+    policy: "ReloadPolicy"
+    dependencies: tuple[ReloadStateKey, ...] = ()
+```
+
+`targets` 记录 runtime Parameter、buffer 或派生状态；`slots` 记录每种逻辑
+角色的 expected/arrived 分片；`policy` 定义该 state 的 backend 行为；
+`dependencies` 表示 finish 前必须完成的其它 state。
+
+例如，`QuantizedLinear` 只需要一个 state：
+
+```text
+QuantizedLinearState
+├── targets["weight"]
+├── targets["scale"]
+├── targets["derived_weight"]       # optional
+├── slots["weight"]
+├── slots["scale"]
+└── policy=MarlinReloadPolicy(...)
+```
+
+这里的 `targets["weight"]` 和 `targets["scale"]` 不是两个 tracer。
+它们只是同一个 `ReloadState` 管理的 runtime target；对应的分片状态保存在
+`slots["weight"]` 和 `slots["scale"]`。
+
+#### 9.3.3 ReloadPolicy
+
+`ReloadPolicy` 是 backend-specific 行为对象。它不拥有全局 round，也不负责
+寻找模型中的其它 state，只处理一个 state 的模块特例：
+
+```python
+class ReloadPolicy(Protocol):
+    def build_slots(self, state_context) -> dict[str, "SlotTable"]:
+        ...
+
+    def resolve_arrival(self, arrival: "ReloadArrival") -> "SlotKey":
+        ...
+
+    def before_write(self, state, arrival) -> None:
+        ...
+
+    def finish(self, state) -> None:
+        ...
+```
+
+典型 policy 包括：
+
+```text
+DenseReloadPolicy
+FP8DenseReloadPolicy
+MarlinReloadPolicy
+DeepGEMMReloadPolicy
+FP8RoutedExpertsReloadPolicy
+CutlassMoEReloadPolicy
+```
+
+`ModelReloadTracer` 不应出现如下全局 backend 分支：
+
+```python
+if marlin:
+    ...
+elif deepgemm:
+    ...
+elif cutlass:
+    ...
+```
+
+backend 选择应在构建 `ReloadState` 时完成，例如由 quant method、
+RoutedExperts builder 或 policy factory 返回对应 policy。
+
+### 9.4 Parameter、buffer 和 derived target 的绑定
+
+Parameter 和 buffer 不需要各自拥有 tracer，也不需要动态添加 tracer 属性。
+它们通过 `ReloadTarget` 绑定到 `ReloadState`：
+
+```python
+@dataclass(frozen=True)
+class ReloadTarget:
+    state_key: ReloadStateKey
+    role: str
+    target_name: str
+    target_kind: Literal["parameter", "buffer", "derived"]
+    module_path: str
+    storage_id: int | None = None
+```
+
+`target_name` 是 owner module 上的属性名，例如 `weight`、
+`weight_scale_inv`、`w13_weight` 或 `w2_weight`。`target_kind` 只用于区分
+Parameter、buffer 和 derived state 的注册语义，不改变 arrival slot 的统一
+处理方式。
+
+target 解析可以由 reload context 通过 `(module_path, target_name)` 查找，也
+可以由模块注册时保存稳定的 module reference。无论采用哪种方式，完成 reload
+期间都必须解析到原有 runtime tensor，不能替换对象。
+
+写入必须保持 Parameter、buffer 和底层 storage identity：
+
+```python
+with torch.no_grad():
+    target.copy_(source)
+```
+
+不能通过重新注册或赋值替换 target：
+
+```python
+module.weight = torch.nn.Parameter(new_tensor)
+module.register_buffer("weight_scale_inv", new_tensor)
+```
+
+共享 storage 的参数和 buffer 需要额外去重。`storage_id` 用于识别同一
+runtime storage 的多个别名，但 logical target 名称仍应保留，以便错误和
+missing 报告能够定位到 loader 看到的逻辑参数。
+
+派生 target 通常没有 checkpoint arrival slot。例如：
+
+```text
+targets["derived_weight"] = Marlin packed runtime weight
+dependencies = ("weight", "scale")
+```
+
+它只有在所有输入 slots 完成后由 policy 生成，并通过 `copy_` 写入已有
+runtime storage。derived target 的完成状态属于 `ReloadState`，不需要另建
+tracer。
+
+### 9.5 ReloadState 的层级关系和依赖 DAG
+
+模块路径仍然可以组织出一棵 state ownership tree，但这里的节点是
+`ReloadState`，不是 tracer：
+
+- **state ownership** 表示 state 属于哪个模块或逻辑权重组；
+- **dependency edge** 表示目标 state 的 policy finish 依赖源 state 完成；
+- 同一 source state 可以被多个目标 state 依赖；
+- dependency edge 不改变 state ownership，也不造成重复注册；
+- `ModelReloadTracer` 统一持有和调度这些 state。
 
 ```mermaid
 flowchart TD
-    Model["ModelTracer<br/>模型级 round 状态"]
-    Layer["DecoderLayerTracer<br/>层级聚合"]
-    Attn["MLAAttentionTracer<br/>注意力派生权重"]
-    MLP["MLPTracer<br/>MLP 聚合"]
-    Dense["DenseLinearTracer<br/>普通线性层"]
-    QKV["QKVLinearTracer<br/>融合 QKV"]
-    Routed["RoutedExpertsTracer<br/>专家映射与分片"]
-    W1["ExpertW1Tracer<br/>w1 slots"]
-    W3["ExpertW3Tracer<br/>w3 slots"]
-    W2["ExpertW2Tracer<br/>w2 slots"]
-    QWeight["QuantizedWeightState<br/>weight slots"]
-    QScale["QuantizedScaleState<br/>scale slots"]
-    Derived["DerivedStateTracer<br/>repack / requant / refresh"]
-    UV["Derived W_UV"]
-    UK["Derived W_UK"]
+    Model["ModelReloadTracer<br/>global round / router / scheduler"]
+    Layer["DecoderLayerState<br/>state ownership"]
+    Attn["MLAAttentionState<br/>attention aggregation"]
+    MLP["MLPState<br/>MLP aggregation"]
+    QKV["QuantizedLinearState<br/>QKV policy + slots"]
+    InputProj["QuantizedLinearState<br/>input projection"]
+    Routed["RoutedExpertsState<br/>expert mapping + slots"]
+    W13W["slots['w13_weight']"]
+    W13S["slots['w13_scale']"]
+    W2W["slots['w2_weight']"]
+    W2S["slots['w2_scale']"]
+    QWeight["slots['weight']"]
+    QScale["slots['scale']"]
+    UV["derived target: W_UV"]
+    UK["derived target: W_UK"]
 
     Model --> Layer
     Layer --> Attn
     Layer --> MLP
     Attn --> QKV
-    MLP --> Dense
+    Attn --> InputProj
     MLP --> Routed
-    Routed --> W1
-    Routed --> W3
-    Routed --> W2
     QKV --> QWeight
     QKV --> QScale
-    QWeight --> Derived
-    QScale --> Derived
-    Dense -. "complete" .-> MLP
-    W1 -. "complete" .-> Routed
-    W3 -. "complete" .-> Routed
-    W2 -. "complete" .-> Routed
+    Routed --> W13W
+    Routed --> W13S
+    Routed --> W2W
+    Routed --> W2S
+
+    QWeight -. "complete + policy.finish()" .-> QKV
+    QScale -. "complete + policy.finish()" .-> QKV
+    QKV -. "complete" .-> Attn
+    InputProj -. "complete" .-> Attn
     Routed -. "complete" .-> MLP
     MLP -. "complete" .-> Layer
-
-    QKV -. "complete" .-> Attn
-    QWeight -. "complete" .-> Derived
-    QScale -. "complete" .-> Derived
-    Derived -. "complete" .-> Attn
     Attn -. "finish" .-> UV
     Attn -. "finish" .-> UK
 ```
 
-上图中的 ownership tree 不是要求每个模型都具有完全相同的节点。实际
-builder 可以根据模块类型裁剪节点：
+上图中实线表示 state ownership/registration，虚线表示 finish dependency。
+`w13_weight`、`w13_scale`、`w2_weight` 和 `w2_scale` 是
+`RoutedExpertsState` 内部的 slot table，不是四个 tracer。类似地，`weight`
+和 `scale` 是 `QuantizedLinearState` 内部的 slot table，也不是两个 tracer。
+图中的 `Derived` 不是一个额外 state，而是 `QuantizedLinearState` 的
+`ReloadPolicy.finish()` 操作，用于生成或刷新 derived target。
 
-| 层级 | 典型 tracer | 主要职责 | 完成依赖 |
-| --- | --- | --- | --- |
-| 模型级 | `ModelTracer` | 管理 reload round、汇总全局错误 | 所有参与本轮 reload 的 layer |
-| Layer 级 | `DecoderLayerTracer` | 聚合 attention、MLP、norm 等成员 | child tracer 的状态 |
-| 复合模块级 | `MLAAttentionTracer` | 感知成员权重并生成 `W_UV`、`W_UK` | QKV、输入投影、scale 和其它成员 |
-| 量化模块级 | `QuantizedLinearTracer` | 协调 weight、scale 和 backend 派生状态 | weight 与 scale slots |
-| MoE 模块级 | `RoutedExpertsTracer` | 根据 expert mapping 声明 local expert slots | 本 rank 所需 expert 的全部 shard |
-| 叶子分片级 | `ExpertW1Tracer` 等 | 记录一个角色的 expert/shard 到达位图 | 对应 logical/physical expert slots |
-| 派生状态级 | `DerivedStateTracer` | 执行 repack、requant 或 scale refresh | 所有输入 tracer 完成 |
+一个 state 的完成条件是：
 
-一个典型 decoder layer 的 finish 顺序如下：
-
-```mermaid
-sequenceDiagram
-    participant L as DecoderLayerTracer
-    participant A as MLAAttentionTracer
-    participant Q as QKV/Linear Tracers
-    participant E as RoutedExpertsTracer
-    participant D as DerivedStateTracer
-
-    Q->>Q: after_write(weight/scale)
-    E->>E: after_write(expert shard)
-    Q-->>A: attention child complete
-    E-->>L: child complete
-    A->>A: check own slots and dependencies
-    A->>D: finish derived state
-    D-->>A: W_UV/W_UK ready
-    A-->>L: attention complete
-    L->>L: aggregate all layer children
+```text
+all required slot tables complete
+and all dependency states complete
+and policy.finish() succeeds
 ```
 
-因此，finish 调度应遵循以下规则：
+MLP/MoE 的 complete 只向 `MLPState` 和 `DecoderLayerState` 汇报，不连接到
+`MLAAttentionState`。`MLAAttentionState` 只依赖自身 Attention 成员及其所需
+的量化 state；只有确实参与 `W_UV`、`W_UK` 计算的输入才应建立 dependency
+edge。
 
-1. 叶子 tracer 先完成自己的 slots；
-2. 量化 tracer 在 weight 和 scale 都完成后执行 backend finish；
-3. MoE tracer 在所有本 rank local expert 的 shard 都完成后上报；
-4. MLA 等复合 tracer 等待所有依赖节点完成，再生成派生权重；
-5. Layer tracer 最后聚合成员状态，并向 Model tracer 上报；
-6. 任一节点失败时，父节点不能报告 complete，必须沿 ownership path
-   汇总错误和 missing slots。
+### 9.6 QuantizedLinear 的状态组织
 
-### 9.5 RoutedExperts 和 EPLB
+一个 `QuantizedLinear` 对应一个 `ReloadState`。它的 target 和 slot table
+可以表示为：
+
+```text
+QuantizedLinearState
+├── targets["weight"]          -> module.weight
+├── targets["scale"]           -> module.weight_scale / weight_scale_inv
+├── targets["derived_weight"]  -> optional packed/requantized runtime target
+├── slots["weight"]            -> weight arrivals
+├── slots["scale"]             -> scale arrivals
+└── policy                     -> FP8/Marlin/DeepGEMM/CUTLASS policy
+```
+
+不同后端只改变 policy 的行为，不改变 ModelReloadTracer 的生命周期：
+
+| policy | weight/scale 完成后的行为 |
+| --- | --- |
+| `FP8DenseReloadPolicy` | 直接写入或刷新 scale 派生状态 |
+| `MarlinReloadPolicy` | 在 staging 中完成 repack/requant，再原地写回 runtime target |
+| `DeepGEMMReloadPolicy` | 联合处理 weight 与 UE8M0 scale，完成 requant 或 backend refresh |
+| `CutlassMoEReloadPolicy` | 处理量化权重、scale、expert layout 和 backend 派生 metadata |
+
+如果后端只需要 scale refresh，`derived_weight` 可以不存在；如果后端需要
+重新量化 weight 本体，则 policy 必须声明 staging/转换阶段，并在成功后
+`copy_` 到已存在的 runtime target。
+
+### 9.7 RoutedExperts 的状态组织
+
+一个 `RoutedExperts` 对应一个 `RoutedExpertsState`，而不是为每个 expert、
+每个 shard 或每个 weight 创建 tracer：
+
+```text
+RoutedExpertsState
+├── targets["w13_weight"] -> module.w13_weight
+├── targets["w13_scale"]  -> module.w13_weight_scale
+├── targets["w2_weight"]  -> module.w2_weight
+├── targets["w2_scale"]   -> module.w2_weight_scale
+├── slots["w13_weight"]   -> (expert, w1/w3) slot table
+├── slots["w13_scale"]    -> (expert, w1/w3) slot table
+├── slots["w2_weight"]    -> expert slot table
+├── slots["w2_scale"]     -> expert slot table
+└── policy                -> FP8/CUTLASS/MoE policy
+```
 
 `RoutedExperts.load_weights()` 具有普通线性层 loader 不具备的全局视野：
 它可以结合 `expert_map_manager`、`moe_config` 和
 `get_expert_mapping()` 知道当前 rank 实际需要装载哪些专家，也能处理
-logical expert、physical expert 和 EPLB 重排之间的关系。因此 RoutedExperts
-的 tracer 必须由 routed-expert builder 根据当前运行时 mapping 构建，不能只
-根据 checkpoint 参数名和一个静态 expert 数量构建。
+logical expert、physical expert 和 EPLB 重排之间的关系。因此
+`RoutedExpertsPolicy.build_slots()` 必须根据当前运行时 mapping 构建 slot
+table，不能只根据 checkpoint 参数名和静态 expert 数量构建。
 
-对于每个 expected slot，至少要保留以下三个概念：
+每个 slot 至少保留：
 
 - **logical expert id**：checkpoint 中的专家编号；
 - **physical expert id**：当前 rank 上 runtime storage 的专家槽位；
-- **shard id**：例如 `w1`、`w2` 或 `w3`。
+- **shard id**：例如 `w1`、`w2` 或 `w3`；
+- **target role**：`w13_weight`、`w13_scale`、`w2_weight` 或 `w2_scale`。
 
-这三个字段不能用一个整数替代。尤其在 fused mapping 中，`expert_id=0/1`
-可能只是用于选择 fused gate/up 权重的 `w1/w3` 半区，并不一定是真实的
-checkpoint expert id。
-
-典型 expected slot 可以表示为：
+典型 slot：
 
 ```text
-w2:  (physical_expert_id, "w2")
-w13: (physical_expert_id, "w1")
-      (physical_expert_id, "w3")
+slots["w2_weight"]:
+    (logical_expert=11, physical_expert=3)
+
+slots["w13_weight"]:
+    (logical_expert=11, physical_expert=3, shard=w1)
+    (logical_expert=11, physical_expert=3, shard=w3)
 ```
 
-builder 应根据当前 rank 实际拥有的 physical experts 声明 slots，同时把
-logical-to-physical mapping 保存为 slot 元数据。收到 event 时，Tracer 通过
-mapping 将 checkpoint 的 logical expert 定位到 runtime physical slot；EPLB
-发生重排时，更新 mapping 或创建新的 reload round，而不是修改已经完成的
-arrival 记录。
+fused mapping 中的 `expert_id=0/1` 可能只是用于选择 fused gate/up 权重的
+`w1/w3` 半区，不一定是真实 checkpoint expert id。因此 policy 必须保存
+logical-to-physical mapping，并在 resolve arrival 时同时校验 expert 和 shard。
 
-RoutedExperts tracer 至少要覆盖：
+本 rank 不负责的专家不应成为 expected slot；`w1`、`w2`、`w3` 必须独立
+登记；fused `w13` 的两个半区不能合并为一个“expert 已到达”标志。EPLB
+映射发生变化时，更新下一轮 reload 的 mapping，不能修改当前 round 已完成
+的 arrival 记录。
 
-- 本 rank 不负责的专家不应成为 expected slot；
-- `w1`、`w2`、`w3` 分片必须独立登记；
-- fused `w13` 的两个半区不能合并成一个“expert 已到达”标志；
-- 同一 logical expert 映射到错误 physical slot 必须拒绝；
-- finish 时 missing 信息必须同时包含 logical expert、physical expert 和
-  shard id。
+### 9.8 Arrival event 和 loader adapter
 
-示例 missing 路径：
-
-```text
-model.layers.0.mlp.experts.w13_weight[
-    logical_expert=11, physical_expert=3, shard=w3
-]
-```
-
-### 9.6 量化 Tracer
-
-一个量化模块实例对应一个 tracer。不要让量化状态分散成多个相互独立、
-无法协调 finish 的 hook；但是一个 tracer 内部可以拥有多个显式子状态，例如：
-
-- weight arrival；
-- scale 或 scale_inv arrival；
-- zero point、amax、exponent bias 等元数据；
-- derived runtime weight；
-- derived scale 或 backend-specific packed state。
-
-FP8 dense、FP8 MoE、Marlin、CUTLASS 和 DeepGEMM 可以由不同 backend tracer
-实现 `declare`、`after_write` 和 `finish_if_ready`，但共享相同的 arrival、
-missing 和生命周期协议。这样“一个量化类一个 tracer”应理解为“一个具体
-module instance 的 quantized weight state 由一个 owner tracer 管理”，而不是
-所有层共享同一个状态对象。
-
-对于需要联合转换的后端，例如 DeepGEMM 的 UE8M0 scale，weight 和 scale
-必须在同一个 tracer 中有独立 slots，并且在两者都完成后才能进入 finish：
-
-```text
-weight complete
-and scale complete
-    -> requantize / repack / derived-state refresh
-    -> in-place copy_ to runtime storage
-```
-
-如果后端的 finish 会重新量化权重本体，则需要明确使用 staging buffer，
-不能把“只写入 scale”误当作完整 reload。相反，如果后端只需刷新派生 scale
-或执行可原地的 layout 变换，则可以直接复用 runtime storage，但仍需保证
-finish 的依赖和错误语义一致。
-
-### 9.7 Arrival event 和 loader 适配
-
-Tracer builder 不应依赖执行 cold `load_weights()` 才推断 expected slots。
-expected slots 应在 reload 初始化时由模型结构、模块配置和当前 rank mapping
-显式构建。
-
-但 reload 时仍然需要可靠的 arrival event。推荐保留一层很薄的 loader
-adapter：
-
-1. 原始 `weight_loader` 或 `RoutedExperts.load_weights()` 解析 checkpoint
-   名称和 loader 参数；
-2. 原始 loader 执行既有的 TP/EP、offset、padding、fused mapping 和实际
-   `copy_`；
-3. adapter 将 loader 已解析的 shard/expert 信息规范化成 event；
-4. Tracer 在写入前后执行校验并登记到达。
-
-示例 event：
+`ModelReloadTracer` 统一接收规范化 arrival event。event 不应要求 tracer
+重新解析原始 checkpoint 名称；名称解析、TP/EP、offset、padding、fused
+mapping 和 expert mapping 仍由原始 loader 或很薄的 adapter 完成。
 
 ```python
 @dataclass(frozen=True)
-class ReloadShardKey:
-    role: str | None = None
-    shard_id: str | None = None
-    logical_expert_id: int | None = None
-    physical_expert_id: int | None = None
-
-
-@dataclass(frozen=True)
 class ReloadArrival:
-    key: ReloadShardKey
+    state_key: ReloadStateKey
+    role: str
+    logical_expert_id: int | None
+    physical_expert_id: int | None
+    shard_id: str | None
     shape: tuple[int, ...]
     dtype: torch.dtype
     source_name: str | None = None
 ```
 
-如果 loader 能够提供更准确的 offset、slice 或 mapping 摘要，也应作为 event
-元数据传递，而不是让 Tracer 从原始参数名重新解析。`before_write` 只负责
-拒绝非法事件；`after_write` 在实际写入成功后将 slot 标记为 arrived。
+推荐事件流程：
 
-### 9.8 建议 API
+```text
+raw checkpoint/load arguments
+    -> original loader resolves layout and mapping
+    -> loader adapter creates ReloadArrival
+    -> ModelReloadTracer.route(arrival)
+    -> state.policy.resolve_arrival(arrival)
+    -> state.policy.before_write(state, arrival)
+    -> original loader writes target or staging
+    -> state.mark_arrived(slot)
+```
 
-下面的 API 只表达状态协议，具体 storage、loader 和 backend 转换由实现类
-提供：
+`before_write` 负责拒绝未知 slot、重复 slot、shape/dtype 不匹配和非法
+expert/shard；只有实际写入成功后才能标记 arrived。对于 policy 需要 staging
+的后端，arrival 可以登记到 staging 状态，但 state 只有在 `finish()` 成功
+后才算 committed。
+
+### 9.9 Finish 调度和派生状态
+
+`ModelReloadTracer.finish()` 不直接按 Python module 遍历顺序调用所有 state。
+它应先检查当前 round 是否为空、构建 dependency DAG 的 ready set，然后执行：
+
+1. 检查每个 state 的 slot table，收集 missing/duplicate/error；
+2. 仅对自身 slots 完整且 dependencies 已完成的 state 调用
+   `policy.finish()`；
+3. policy 完成 weight/scale 的联合转换、repack、requant 或 scale refresh；
+4. 派生结果通过 `copy_` 写入已有 Parameter/buffer/derived target；
+5. state 标记 complete，并释放本轮 staging；
+6. 继续调度依赖该 state 的其它 state；
+7. 所有 state 完成后返回成功，否则返回带完整路径的错误报告。
+
+例如 `QuantizedLinearState` 的依赖是：
+
+```text
+slots["weight"] complete
+and slots["scale"] complete
+    -> policy.finish()
+    -> optional derived target refresh
+    -> state complete
+```
+
+例如 `MLAAttentionState` 只有在其依赖的输入 state 完成后，才允许生成
+`W_UV`、`W_UK`。MLP/MoE state 不应自动成为 MLA 的依赖；只有真正参与
+Attention 派生计算的 state 才建立 dependency edge。
+
+### 9.10 生命周期、错误语义和 API
+
+一个 reload round 的推荐生命周期：
+
+1. 构建模型和 runtime storage；
+2. reload initialize 时创建一个 `ModelReloadTracer`；
+3. 根据模型结构注册 `ReloadState`、target、policy 和 dependency edges；
+4. policy 根据当前 rank、TP/EP 配置、MoE mapping 和 backend 配置声明
+   expected slots；
+5. loader adapter 产生 arrival event，model tracer 路由并校验；
+6. 原始 loader 写入 runtime storage 或 staging，成功后标记 slot arrived；
+7. FINISH 按 DAG 调度各 state 的 policy.finish；
+8. 所有 state 完成后提交 round，否则返回错误和 missing。
+
+失败语义：
+
+- 未知 slot、重复 slot、shape/dtype 不匹配：在写入前拒绝；
+- 缺失 slot：FINISH 返回完整的 state/role/expert/shard 路径；
+- 原地写入已经发生后发现缺失：runtime 处于新旧混合状态，不能继续推理，
+  必须硬报错并重新 cold load 或重启；
+- staging 转换失败：保留旧 runtime storage，释放本轮 staging，报告失败；
+- 空 arrival round：FINISH 为 no-op，不应误报“所有权重已完成”；
+- 成功 FINISH 后重复调用必须幂等，不能再次执行破坏性转换。
+
+建议 API：
 
 ```python
-class ReloadTracer:
-    def declare(self, key, shape, dtype=None, metadata=None):
+class ModelReloadTracer:
+    def register_state(self, state: ReloadState) -> None:
         ...
 
-    def begin_round(self, scope=None):
+    def begin_round(self, scope=None) -> None:
         ...
 
-    def before_write(self, arrival):
+    def route(self, arrival: ReloadArrival) -> None:
         ...
 
-    def after_write(self, arrival):
+    def finish(self) -> "ReloadResult":
         ...
 
-    def finish_if_ready(self):
+    def missing(self) -> list[str]:
+        ...
+
+    def reset(self) -> None:
+        ...
+
+
+class ReloadState:
+    def mark_arrived(self, slot_key) -> None:
         ...
 
     def complete(self) -> bool:
@@ -659,59 +831,38 @@ class ReloadTracer:
 
     def missing(self) -> list[str]:
         ...
-
-    def reset(self):
-        ...
 ```
 
-模块和量化 backend 提供 builder：
+### 9.11 Builder 和迁移路径
+
+builder 不创建独立的 weight tracer，只创建 target、slot table、policy 和
+dependency edge：
 
 ```python
-module.make_reload_tracer()
-quant_method.make_reload_tracer(layer)
+def build_quantized_linear_state(layer, context) -> ReloadState:
+    ...
+
+
+def build_routed_experts_state(layer, context) -> ReloadState:
+    ...
+
+
+model_reload_tracer.register_state(
+    build_quantized_linear_state(layer, context)
+)
 ```
-
-builder 的输入必须包含构建 expected slots 所需的运行时上下文，例如当前
-rank、TP/EP 配置、MoE mapping、backend 配置和模块 path。`make_reload_tracer`
-返回的 tracer 只绑定一个 module instance，不能在不同层之间复用。
-
-### 9.9 生命周期和错误语义
-
-一个 reload round 的推荐生命周期如下：
-
-1. 构建模型和 runtime storage；
-2. reload initialize 时递归构建 ownership tree，并注册 dependency edges；
-3. 每个模块 builder 根据当前 rank 和 backend 声明 expected slots；
-4. loader 产生 arrival event，Tracer 执行 `before_write`；
-5. 原始 loader 写入 runtime storage 或 staging；
-6. 写入成功后执行 `after_write`，更新到达位图；
-7. FINISH 从叶子 tracer 开始检查 missing；
-8. 所有依赖满足后执行派生转换、原地刷新和 backend state 更新；
-9. 父 tracer 汇总子 tracer 状态，调用端返回 complete 或完整 missing 路径；
-10. round 成功后清理临时状态，失败则硬报错并终止本轮 reload。
-
-失败语义必须和当前设计保持一致：
-
-- 未知 slot、重复 slot、shape/dtype 不匹配：在写入前拒绝；
-- 缺失 slot：FINISH 返回完整 missing 列表；
-- 原地写入已经发生后发现缺失：runtime 处于新旧混合状态，不能继续推理，
-  必须硬报错并重新 cold load 或重启；
-- staging 转换失败：保留旧 runtime storage，释放本轮 staging，报告失败；
-- 空 arrival round：FINISH 为 no-op，不应误报“所有权重已完成”；
-- 成功 FINISH 后重复调用必须幂等，不能再次执行破坏性转换。
-
-### 9.10 迁移路径
 
 Tracer 方案应分阶段迁移，避免同时改变 loader 写入和 reload 状态语义：
 
-1. 先实现通用 `ReloadTracer`、slot key、arrival event 和 missing 汇总；
-2. 为普通参数、融合 QKV、`RoutedExperts`、FP8/Marlin/DeepGEMM 和 MLA
-   提供 builder；
-3. 让现有 loader adapter 同时驱动 Tracer 和当前 observer，比较两者的
+1. 先实现通用 `ModelReloadTracer`、`ReloadState`、`ReloadTarget`、
+   `SlotTable`、arrival event 和 missing 汇总；
+2. 为普通参数、融合 QKV、`QuantizedLinear`、`RoutedExperts`、FP8/Marlin/
+   DeepGEMM 和 MLA 提供 state/policy builder；
+3. 让现有 loader adapter 同时驱动 ModelReloadTracer 和当前 observer，比较两者的
    expected/arrived 结果；
 4. 验证普通权重、QKV、MoE expert、EPLB、scale/weight 联合 finish 及
    派生权重刷新；
-5. 将 `LoaderWeightHook` 的状态记录逐步迁移到 Tracer，只保留写入适配；
+5. 将 `LoaderWeightHook` 的状态记录逐步迁移到 `ReloadState`，只保留写入适配；
 6. 删除 `_ModelHookPlan.records.expected` 等重复状态来源；
 7. 最后删除旧的 observer 状态逻辑，保留原始 loader 作为唯一布局和写入
    实现。
@@ -719,12 +870,13 @@ Tracer 方案应分阶段迁移，避免同时改变 loader 写入和 reload 状
 迁移完成后的职责划分应保持单一：
 
 ```text
-module builder      -> 声明当前 rank 的 expected slots 和依赖
+ModelReloadTracer   -> round、路由、调度、汇总和错误报告
+ReloadState         -> target、slot table、state completion
+ReloadPolicy        -> backend-specific slot/finish 行为
 loader adapter      -> 解析 loader 参数并产生 arrival event
 原始 weight_loader  -> 执行 TP/EP/fused/expert 映射和实际写入
-ReloadTracer        -> 校验、记录、汇总、finish 和 missing 报告
 ```
 
 这套划分既保留 `RoutedExperts.load_weights()` 的全局 expert mapping 能力，
-也让 MLA 等复合模块能够感知成员状态；同时避免通过联合 hook 把多个不相关
-权重的 layout、转换和完成性逻辑揉在同一段流程中。
+也让 MLA 等复合模块能够感知成员状态；同时避免通过联合 hook 或大量细粒度
+weight tracer 把多个不相关权重的 layout、转换和完成性逻辑揉在同一段流程中。
