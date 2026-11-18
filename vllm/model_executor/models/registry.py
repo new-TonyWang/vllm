@@ -148,6 +148,11 @@ _TEXT_GENERATION_MODELS = {
         "vllm.models.kimi_k3",
         "KimiLinearForCausalLM",
     ),
+    # Kimi-K3.1 checkpoints distilled to a text-only tower carry this name.
+    "KimiK31ForCausalLM": (
+        "vllm.models.kimi_k3",
+        "KimiLinearForCausalLM",
+    ),
     "Lfm2ForCausalLM": ("lfm2", "Lfm2ForCausalLM"),
     "Lfm2MoeForCausalLM": ("lfm2_moe", "Lfm2MoeForCausalLM"),
     "Lfm3ForCausalLM": ("lfm3", "Lfm3ForCausalLM"),
